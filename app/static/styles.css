@@ -120,6 +120,9 @@ input, select, textarea {
 .auth .field label { display: block; font-size: .86rem; color: var(--ink-soft); margin-bottom: .2rem; }
 .auth .actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .auth .switch { background: none; border: none; color: var(--stamp); padding: 0; text-decoration: underline; }
+.progress-actions { margin-top: 1.2rem; }
+.demo-hint { margin-top: 1rem; padding: .7rem .9rem; border: 1px dashed var(--stamp); background: var(--stamp-wash); }
+.demo-hint p { margin: 0 0 .5rem; }
 .demo-title { margin-top: 1.8rem; font-size: 1rem; }
 .roles { margin-top: .6rem; border-top: 1px solid var(--ink); }
 .file-list { margin: .3rem 0 0; padding-left: 1.1rem; font-size: .86rem; color: var(--ink-soft); }

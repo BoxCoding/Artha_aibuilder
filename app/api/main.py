@@ -304,6 +304,12 @@ def _check_can_attach(case: Case, limit: int) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {limit} statements per application.")
 
 
+@app.get("/api/my/cases")
+async def my_cases(principal: Principal = Depends(require_roles(Role.BORROWER))) -> dict[str, Any]:
+    """A borrower's own applications, newest first, so a submitted case is never lost behind a new form."""
+    return {"cases": await asyncio.to_thread(get_store().list_for_owner, principal.uid)}
+
+
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: str, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     store = get_store()

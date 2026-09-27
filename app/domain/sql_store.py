@@ -22,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import audit_log, callbacks, cases, documents, is_postgres, jobs, sqlite_write_lock
 from app.domain.models import AuditEvent, Case, CaseStatus
-from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, chain_hash, queue_row)
+from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, chain_hash, owner_row,
+                              queue_row)
 
 log = logging.getLogger("artha.store")
 AUDIT_LOCK_KEY = 0x4152_5448  # "ARTH"
@@ -89,6 +90,14 @@ class SqlStore:
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).all()
         return [queue_row(r.case_id, r.business_name, r.status, r.updated_at, r.summary) for r in rows]
+
+    def list_for_owner(self, owner_uid: str, limit: int = 50) -> list[dict[str, Any]]:
+        stmt = (select(cases.c.case_id, cases.c.business_name, cases.c.status, cases.c.created_at,
+                       cases.c.updated_at, cases.c.summary)
+                .where(cases.c.owner_uid == owner_uid).order_by(cases.c.updated_at.desc()).limit(limit))
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).all()
+        return [owner_row(r.case_id, r.business_name, r.status, r.created_at, r.updated_at, r.summary) for r in rows]
 
     def summaries(self) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:

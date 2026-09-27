@@ -43,8 +43,20 @@
 
   <section id="view-progress" class="hidden">
     <h1 id="progress-title">Reading your statements</h1>
-    <p class="muted">This usually takes under a minute. You can watch each step as it finishes.</p>
+    <p class="muted" id="progress-note">This usually takes under a minute. You can watch each step as it finishes.</p>
     <div class="ledger" id="ledger"></div>
+    <div class="row progress-actions" id="progress-actions"></div>
+  </section>
+
+  <section id="view-mine" class="hidden">
+    <div class="spread">
+      <h1>Your applications</h1>
+      <button class="stamp" id="mine-new">New application</button>
+    </div>
+    <table class="queue-table">
+      <thead><tr><th>Business</th><th>Requested</th><th>Submitted</th><th>Status</th></tr></thead>
+      <tbody id="mine-body"></tbody>
+    </table>
   </section>
 
   <section id="view-outcome" class="hidden">

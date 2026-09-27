@@ -63,6 +63,14 @@ def queue_row(case_id: str, business_name: str, status: str, updated_at: datetim
     }
 
 
+def owner_row(case_id: str, business_name: str, status: str, created_at: datetime, updated_at: datetime,
+              summary: dict[str, Any]) -> dict[str, Any]:
+    """What a borrower may see in their own list: no band, recommendation or findings."""
+    return {"case_id": case_id, "business_name": business_name, "status": status,
+            "requested_amount": summary.get("requested_amount"), "decided": bool(summary.get("decided")),
+            "created_at": created_at, "updated_at": updated_at}
+
+
 class CaseStore(Protocol):
     def add(self, case: Case, protected: bool = False) -> None: ...
     def replace(self, case: Case) -> None: ...
@@ -70,6 +78,7 @@ class CaseStore(Protocol):
     def mutate(self, case_id: str) -> Any: ...
     def list(self) -> list[Case]: ...
     def list_queue(self, limit: int) -> list[dict[str, Any]]: ...
+    def list_for_owner(self, owner_uid: str, limit: int = 50) -> list[dict[str, Any]]: ...
     def summaries(self) -> list[dict[str, Any]]: ...
     def change_marker(self, case_id: str) -> int: ...
     def put_file(self, case_id: str, doc_id: str, data: bytes) -> None: ...
@@ -143,6 +152,13 @@ class InMemoryStore:
                           key=lambda c: c.updated_at, reverse=True)[:limit]
             return [queue_row(c.case_id, c.business_name, c.status.value, c.updated_at, case_summary(c))
                     for c in live]
+
+    def list_for_owner(self, owner_uid: str, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            mine = sorted((c for c in self._cases.values() if c.owner_uid == owner_uid),
+                          key=lambda c: c.updated_at, reverse=True)[:limit]
+            return [owner_row(c.case_id, c.business_name, c.status.value, c.created_at, c.updated_at,
+                              case_summary(c)) for c in mine]
 
     def summaries(self) -> list[dict[str, Any]]:
         with self._lock:

@@ -28,8 +28,10 @@ async function api(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
-const VIEWS = ["gate", "apply", "progress", "outcome", "queue", "case", "risk"];
+const VIEWS = ["gate", "apply", "progress", "mine", "outcome", "queue", "case", "risk"];
+let viewToken = 0; // bumped on every view change, so a background poll knows when to stop
 function show(name) {
+  viewToken += 1;
   VIEWS.forEach((v) => $(`view-${v}`).classList.toggle("hidden", v !== name));
   window.scrollTo({ top: 0 });
 }
@@ -186,7 +188,7 @@ async function signIn(credentials) {
 
 function afterSignIn() {
   renderNav();
-  if (state.me.role === "borrower") renderApply();
+  if (state.me.role === "borrower") loadMine();
   else if (state.me.role === "underwriter") loadQueue();
   else loadRisk();
 }
@@ -195,7 +197,7 @@ function renderNav() {
   const nav = $("nav");
   clear(nav);
   if (!state.me) return;
-  const links = state.me.role === "borrower" ? [["New application", renderApply]]
+  const links = state.me.role === "borrower" ? [["My applications", loadMine], ["New application", renderApply]]
     : state.me.role === "underwriter" ? [["Queue", loadQueue]]
     : [["Risk", loadRisk], ["Queue", loadQueue]];
   links.forEach(([label, handler]) => {
@@ -321,6 +323,9 @@ const STEP_ORDER = ["read_documents", "screen_content", "categorise", "forensics
 
 function watchProgress() {
   show("progress");
+  $("progress-title").textContent = "Reading your statements";
+  $("progress-note").textContent = "This usually takes under a minute. You can watch each step as it finishes.";
+  clear($("progress-actions"));
   const ledger = $("ledger");
   clear(ledger);
   const rows = new Map();
@@ -349,18 +354,106 @@ function watchProgress() {
   source.addEventListener("timeout", () => source.close());
 }
 
+/* A person decides every case, which can take a while. The borrower is told so plainly, can leave and
+   come back (the application is saved), and the page checks back with a growing interval instead of
+   every two seconds. */
 async function waitForDecision() {
   show("progress");
-  $("progress-title").textContent = "A loan officer is reviewing your application";
+  const token = viewToken;
+  $("progress-title").textContent = "Your application is with a loan officer";
+  $("progress-note").textContent = "Every application is decided by a person, not a machine. Your application is "
+    + "saved: you can close this page and come back to “My applications” at any time.";
   const ledger = $("ledger");
   const row = el("div", "ledger-row pending pulse");
-  row.append(el("span", "tick", "·"), el("span", null, "Waiting for the underwriter's decision"), el("span", "ms", ""));
+  const status = el("span", "ms", "");
+  row.append(el("span", "tick", "·"), el("span", null, "Waiting for the loan officer's decision"), status);
   ledger.appendChild(row);
-  for (let i = 0; i < 600; i += 1) {
-    const data = await api(`/api/cases/${state.caseId}`);
-    if (data.decided) { state.caseData = data; renderOutcome(data); return; }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  const actions = $("progress-actions");
+  clear(actions);
+  const check = el("button", "ghost", "Check now");
+  const mine = el("button", "ghost", "My applications");
+  mine.addEventListener("click", loadMine);
+  actions.append(check, mine);
+  if (state.config?.demo_mode) actions.appendChild(demoHint(
+    "Demo: nobody else is signed in to review this. Switch to the underwriter to decide it now.",
+    "Review it now as Arun Prakash (underwriter)",
+    async () => {
+      if (state.me.uid.endsWith("@demo.artha")) state.demoBorrower = state.me.uid;
+      await demoSwitch("arun@demo.artha");
+      await openCase(state.caseId);
+    }));
+
+  let delay = 3000;
+  let wake = null;
+  check.addEventListener("click", () => { delay = 3000; if (wake) wake(); });
+  const started = Date.now();
+  while (token === viewToken && Date.now() - started < 30 * 60 * 1000) {
+    try {
+      const data = await api(`/api/cases/${state.caseId}`);
+      if (token !== viewToken) return;
+      if (data.decided) { state.caseData = data; renderOutcome(data); return; }
+      status.textContent = `checked ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    } catch { status.textContent = "offline, retrying"; }
+    await new Promise((resolve) => { wake = resolve; setTimeout(resolve, delay); });
+    delay = Math.min(delay * 1.5, 30000);
   }
+  if (token === viewToken) status.textContent = "We'll keep your application; check back later.";
+}
+
+function demoHint(text, label, action) {
+  const box = el("div", "demo-hint");
+  box.appendChild(el("p", "small", text));
+  const button = el("button", "stamp", label);
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await action(); } catch (error) { box.appendChild(el("p", "small", error.message)); button.disabled = false; }
+  });
+  box.appendChild(button);
+  return box;
+}
+
+async function demoSwitch(email) {
+  await api("/api/session", { method: "POST", body: JSON.stringify({ email }) });
+  state.me = await api("/api/me");
+  renderNav();
+}
+
+const BORROWER_STATUS = {
+  DRAFT: "Not submitted", PROCESSING: "Reading your statements", READY_FOR_REVIEW: "With a loan officer",
+  PENDING_SECOND_APPROVAL: "With a loan officer", NEEDS_MANUAL_PROCESSING: "With a loan officer",
+};
+
+async function loadMine() {
+  const { cases } = await api("/api/my/cases");
+  if (cases.length === 0) { renderApply(); return; }
+  show("mine");
+  $("mine-new").onclick = renderApply;
+  const body = $("mine-body");
+  clear(body);
+  cases.forEach((c) => {
+    const tr = el("tr");
+    tr.tabIndex = 0;
+    tr.append(el("td", null, c.business_name),
+              el("td", null, `₹${Number(c.requested_amount).toLocaleString("en-IN")}`),
+              el("td", null, new Date(c.created_at).toLocaleDateString()),
+              el("td", null, c.decided ? "Decision ready" : BORROWER_STATUS[c.status] || "With a loan officer"));
+    const open = () => openMine(c);
+    tr.addEventListener("click", open);
+    tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+    body.appendChild(tr);
+  });
+}
+
+async function openMine(c) {
+  state.caseId = c.case_id;
+  const data = await api(`/api/cases/${c.case_id}`);
+  state.caseData = data;
+  state.lang = data.language || state.lang;
+  if (data.decided) renderOutcome(data);
+  else if (data.status === "PROCESSING") watchProgress();
+  else if (data.status === "DRAFT") renderApply();
+  else { clear($("ledger")); waitForDecision(); }
 }
 
 function renderOutcome(data) {
@@ -835,6 +928,15 @@ function renderDecision() {
       + (data.decision.second_approver ? `, countersigned by ${data.decision.second_approver}` : "")
       + (data.decision.override ? ` · override: ${data.decision.reason}` : "");
     panel.appendChild(done);
+    if (state.config?.demo_mode && state.demoBorrower) {
+      const borrower = state.demoBorrower;
+      panel.appendChild(demoHint("Demo: the applicant has been told. See the result the way they see it.",
+        "See what the borrower sees", async () => {
+          await demoSwitch(borrower);
+          state.demoBorrower = null;
+          await openMine({ case_id: state.caseId });
+        }));
+    }
     return;
   }
   panel.appendChild(el("h2", null, "Your decision"));
@@ -844,6 +946,11 @@ function renderDecision() {
       + `${data.pending_decision.final_outcome.replaceAll("_", " ").toLowerCase()} for `
       + `₹${Number(data.pending_decision.approved_amount).toLocaleString("en-IN")}. A second underwriter must countersign.`;
     panel.appendChild(pending);
+    if (state.config?.demo_mode && data.pending_decision.decided_by === state.me.uid) {
+      const other = state.me.uid === "divya@demo.artha" ? ["arun@demo.artha", "Arun Prakash"] : ["divya@demo.artha", "Divya Menon"];
+      panel.appendChild(demoHint("Demo: the same person cannot countersign their own proposal.",
+        `Countersign as ${other[1]}`, async () => { await demoSwitch(other[0]); await openCase(state.caseId); }));
+    }
   }
   const outcome = el("select"); outcome.id = "d-outcome";
   ["APPROVE", "APPROVE_WITH_CONDITIONS", "REFER", "REFER_INTEGRITY_REVIEW", "DECLINE"].forEach((value) => {

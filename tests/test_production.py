@@ -398,3 +398,17 @@ def test_the_shipped_challenger_model_actually_loads() -> None:
     model = load_model()
     assert model is not None, "risk model artifact present but failed to load - check ML dependencies"
     assert 0.0 <= model.predict_pd({}) <= 1.0
+
+
+def test_borrowers_list_only_their_own_applications_without_internals() -> None:
+    owner, other = TestClient(app), TestClient(app)
+    register(owner)
+    register(other)
+    mine = new_case(owner)
+    new_case(other)
+    listed = owner.get("/api/my/cases").json()["cases"]
+    assert [c["case_id"] for c in listed] == [mine]
+    assert not {"band", "recommendation", "integrity_findings"} & set(listed[0])
+    staff = TestClient(app)
+    staff.post("/api/session", json={"email": "arun@demo.artha"})
+    assert staff.get("/api/my/cases").status_code == 403
