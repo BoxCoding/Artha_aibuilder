@@ -57,6 +57,9 @@ const VIEWS = ["gate", "apply", "progress", "mine", "outcome", "queue", "case", 
 let viewToken = 0; // bumped on every view change, so a background poll knows when to stop
 function show(name) {
   viewToken += 1;
+  document.querySelectorAll("#nav button[data-view]").forEach((b) => {
+    if (b.dataset.view === name) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
   VIEWS.forEach((v) => $(`view-${v}`).classList.toggle("hidden", v !== name));
   window.scrollTo({ top: 0 });
 }
@@ -239,14 +242,15 @@ function renderNav() {
   clear(nav);
   if (!state.me) return;
   const links = {
-    borrower: [["My applications", loadMine], ["New application", renderApply]],
-    loan_officer: [["My applications", loadMine], ["New customer", renderApply]],
-    underwriter: [["Credit queue", loadQueue]],
-    risk_admin: [["Risk", loadRisk], ["Credit queue", loadQueue], ["Team", loadTeam]],
+    borrower: [["My applications", loadMine, "mine"], ["New application", renderApply, "apply"]],
+    loan_officer: [["My applications", loadMine, "mine"], ["New customer", renderApply, "apply"]],
+    underwriter: [["Credit queue", loadQueue, "queue"]],
+    risk_admin: [["Risk", loadRisk, "risk"], ["Credit queue", loadQueue, "queue"], ["Team", loadTeam, "team"]],
   }[state.me.role] || [];
-  links.push(["Account", renderAccount]);
-  links.forEach(([label, handler]) => {
+  links.push(["Account", renderAccount, "account"]);
+  links.forEach(([label, handler, view]) => {
     const button = el("button", "ghost", label);
+    button.dataset.view = view;
     button.addEventListener("click", handler);
     nav.appendChild(button);
   });
@@ -364,6 +368,22 @@ function renderApply() {
   const form = $("apply-form");
   clear(form);
   state.caseId = null;
+
+  if (state.config?.demo_mode) {
+    const fill = el("button", "ghost small-btn", "Fill demo customer");
+    fill.addEventListener("click", () => {
+      const demo = { full_name: officer ? "Priya Nair" : state.me.name, mobile: "9845012345", email: "priya@example.com",
+        pan: "ABCPN1234K", date_of_birth: "1988-04-12", business_name: "Meena's Home Kitchen", industry: "Food and restaurants",
+        business_start_year: "2019", address_line: "12 Temple Street, Jayanagar", city: "Bengaluru", state: "Karnataka",
+        pincode: "560041" };
+      Object.entries(demo).forEach(([k, v]) => { const n = $(`a-${k}`); if (n) n.value = v; });
+      $("f-consent").checked = true;
+    });
+    const bar = el("div", "demo-hint");
+    bar.appendChild(el("p", "small", "Demo mode: fill the form with a fictional customer in one click."));
+    bar.appendChild(fill);
+    form.appendChild(bar);
+  }
 
   const sections = [];
   const section = (title, note) => {

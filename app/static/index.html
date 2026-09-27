@@ -11,7 +11,16 @@
 <body>
 <header class="masthead">
   <div class="wrap">
-    <div class="mark">LedgerLens<span>see what the statement isn't telling you</span></div>
+    <div class="mark">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b3fd9"/><stop offset=".55" stop-color="#7b5cff"/><stop offset="1" stop-color="#0fb5a6"/></linearGradient></defs>
+        <rect x="3" y="5" width="22" height="28" rx="4" fill="url(#lg)" opacity=".22"/>
+        <path d="M8 12h12M8 17h9M8 22h11M8 27h7" stroke="url(#lg)" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="25" cy="21" r="8.5" fill="none" stroke="url(#lg)" stroke-width="3.2"/>
+        <path d="M31.2 27.2 37 33" stroke="url(#lg)" stroke-width="3.6" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">LedgerLens</span><span class="tagline">see what the statement isn't telling you</span>
+    </div>
     <nav id="nav"></nav>
   </div>
 </header>
@@ -20,11 +29,17 @@
   <!-- sign-in -->
   <section id="view-gate" class="gate">
     <div>
-      <h1>A thin file is not the same as a bad borrower.</h1>
-      <p class="muted">Millions of small businesses have no credit history, only a bank statement — and a statement
+      <span class="eyebrow-pill"><b>MSME</b> Bank-statement underwriting for NBFCs</span>
+      <h1>A thin file is not a <span class="grad">bad borrower.</span></h1>
+      <p class="lede">Millions of small businesses have no credit history, only a bank statement — and a statement
         can be edited in a browser in about a minute. LedgerLens reads the statement, checks the file itself for signs of
         editing, and hands a credit officer a recommendation where every sentence points back to the row it came from.
         A person decides; the applicant is told why, in their own language.</p>
+      <div class="stats">
+        <div class="stat"><b>~2 s</b><span>instant recommendation</span></div>
+        <div class="stat"><b>9 + 1</b><span>forensic &amp; identity checks</span></div>
+        <div class="stat"><b>100%</b><span>memo claims cited to a row</span></div>
+      </div>
       <form class="auth sheet" id="auth" novalidate></form>
       <p class="small muted" id="gate-note" role="alert"></p>
       <div id="demo-block" class="hidden">
@@ -162,6 +177,11 @@
     <table class="audit"><tbody id="risk-audit"></tbody></table>
   </section>
 </main>
+
+<footer class="foot">
+  <span>LedgerLens · evidence-first lending</span>
+  <span>A person sanctions every loan · Customer data stays on your infrastructure</span>
+</footer>
 
 <script src="/static/app.js?v=__ASSET_VERSION__" type="module"></script>
 </body>
