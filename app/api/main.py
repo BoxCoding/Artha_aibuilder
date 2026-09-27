@@ -1,4 +1,4 @@
-"""ARTHA HTTP API.
+"""LedgerLens HTTP API.
 
 Every state-changing route is authenticated, role-checked, rate-limited and written to the
 hash-chained audit log. Responses are shaped per role by app.api.views.
@@ -57,6 +57,14 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
 
         metadata.create_all(get_engine())
     get_accounts()  # seeds demo accounts when demo mode is on
+    if settings.pipeline_mode == "inline" and settings.database_url:
+        # A restart kills in-process pipeline runs. Nothing else will resume them in inline mode
+        # (queue mode recovers through job leases), so pick them up again here.
+        stranded = get_store().ids_with_status(CaseStatus.PROCESSING)
+        for case_id in stranded:
+            submit_case(case_id)
+        if stranded:
+            log.info("resumed_stranded_cases", extra={"detail": f"count={len(stranded)}"})
     seed = settings.receipt_signing_seed.get_secret_value() if settings.receipt_signing_seed else None
     _signer = ReceiptSigner(seed)
     log.info("startup", extra={"detail": f"env={settings.app_env} ai_mode={settings.llm_mode} "
@@ -71,7 +79,7 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
         log.info("shutdown", extra={"detail": "draining"})
 
 
-app = FastAPI(title="ARTHA", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
+app = FastAPI(title="LedgerLens", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
               lifespan=lifespan)
 
 
@@ -112,8 +120,9 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
         "Referrer-Policy": "no-referrer",
         "X-Frame-Options": "DENY",
         "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
-        "Cache-Control": "no-store" if request.url.path.startswith("/api") else "private, max-age=300",
     })
+    if "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else "private, max-age=300"
     if settings.is_prod:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -721,7 +730,7 @@ async def _ai_status() -> dict[str, Any]:
     return {"mode": settings.llm_mode, "reachable": settings.llm_mode != "offline"}
 
 
-@app.get("/.well-known/artha-receipt-key.json")
+@app.get("/.well-known/ledgerlens-receipt-key.json")
 async def receipt_key() -> dict[str, Any]:
     """The public half of the receipt signing key, so anyone can verify a receipt without us."""
     issuer = signer()
@@ -770,9 +779,20 @@ async def delete_case(case_id: str, principal: Principal = Depends(limiter(20)))
 
 # --------------------------------------------------------------------------- static app
 
+def _asset_version() -> str:
+    """Content hash of the front end, so a deploy is picked up at once instead of after the cache expires."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for name in ("app.js", "styles.css", "index.html"):
+        digest.update((STATIC_DIR / name).read_bytes())
+    return digest.hexdigest()[:12]
+
+
 @app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+async def index() -> Response:
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("__ASSET_VERSION__", _asset_version())
+    return Response(html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

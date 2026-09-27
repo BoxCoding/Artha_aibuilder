@@ -38,7 +38,7 @@ from app.domain.models import Case
 
 log = logging.getLogger("artha.receipt")
 
-RECEIPT_VERSION = "artha-receipt.v1"
+RECEIPT_VERSION = "ledgerlens-receipt.v1"
 
 
 def canonical_bytes(payload: dict[str, Any]) -> bytes:
@@ -141,7 +141,7 @@ def build_payload(case: Case, audit_head: str, audit_events: int) -> dict[str, A
     return {
         "receipt_version": RECEIPT_VERSION,
         "issued_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "issuer": "ARTHA prototype (synthetic data)",
+        "issuer": "LedgerLens",
         "case": {
             "case_id": case.case_id,
             "business_name": case.business_name,

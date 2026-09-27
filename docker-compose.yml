@@ -1,17 +1,19 @@
-# Local production-shaped stack: PostgreSQL, a one-shot migration, the API and a pipeline worker.
-#   python -m app.cli generate-secrets >> .env.compose   # once
-#   docker compose --env-file .env.compose up --build
-#   docker compose exec api python -m app.cli create-user you@lender.example "Your Name" underwriter
+# Production-shaped stack: PostgreSQL, a one-shot migration, the API, a pipeline worker and a local
+# model server (Ollama), so no customer data leaves the machine.
+#   python -m app.cli generate-secrets > .env.compose          # once
+#   docker compose --env-file .env.compose up --build -d
+#   docker compose exec ollama ollama pull gemma3:4b            # once; or set OLLAMA_MODEL
+#   open http://localhost:8080 and create the first admin account
 services:
   db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: artha
-      POSTGRES_USER: artha
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-artha-local-only}
+      POSTGRES_DB: ledgerlens
+      POSTGRES_USER: ledgerlens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ledgerlens-local-only}
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U artha -d artha"]
+      test: ["CMD-SHELL", "pg_isready -U ledgerlens -d ledgerlens"]
       interval: 5s
       retries: 10
 
@@ -21,9 +23,12 @@ services:
     environment: &env
       APP_ENV: ${APP_ENV:-prod}
       DEMO_MODE: ${DEMO_MODE:-false}
-      DATABASE_URL: postgresql+psycopg://artha:${POSTGRES_PASSWORD:-artha-local-only}@db:5432/artha
+      DATABASE_URL: postgresql+psycopg://ledgerlens:${POSTGRES_PASSWORD:-ledgerlens-local-only}@db:5432/ledgerlens
       PIPELINE_MODE: queue
-      LLM_MODE: ${LLM_MODE:-offline}
+      LLM_MODE: ${LLM_MODE:-ollama}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-}
       SECRET_KEY: ${SECRET_KEY:?run python -m app.cli generate-secrets}
       RECEIPT_SIGNING_SEED: ${RECEIPT_SIGNING_SEED:?run python -m app.cli generate-secrets}
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
@@ -47,5 +52,12 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
 
+  ollama:
+    image: ollama/ollama:latest
+    volumes: [ollama:/root/.ollama]
+    # Uncomment on a host with an NVIDIA GPU:
+    # deploy: {resources: {reservations: {devices: [{driver: nvidia, count: all, capabilities: [gpu]}]}}}
+
 volumes:
   pgdata:
+  ollama:

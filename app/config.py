@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     ollama_model: str = "gemma3:4b"
     ollama_vision_model: str | None = None
     ollama_num_ctx: int = 8192
+    # Small local models can loop; cap each reply. A truncated reply fails its schema and the
+    # deterministic fallback takes over, instead of a runaway generation holding up the case.
+    ollama_num_predict: int = 1536
+    # Model categorisation runs before scoring, so it is bounded to keep the recommendation instant.
+    llm_categorise_min_share: float = 0.2      # only when rules leave at least this share uncategorised
+    llm_categorise_timeout_seconds: float = 6.0
     google_cloud_project: str | None = None
     google_cloud_location: str = "global"
     gemini_api_key: SecretStr | None = None
@@ -78,7 +84,7 @@ class Settings(BaseSettings):
     # Ed25519 seed (32 bytes, base64) used to sign portable decision receipts. Without it the
     # service generates an ephemeral key and says so: receipts will not verify after a restart.
     receipt_signing_seed: SecretStr | None = None
-    receipt_verify_url: str = "/.well-known/artha-receipt-key.json"
+    receipt_verify_url: str = "/.well-known/ledgerlens-receipt-key.json"
     case_retention_days: int = 30
 
     # Origins allowed to make state-changing requests, comma separated. The service's own origin is

@@ -178,7 +178,8 @@ class LLMGateway:
             try:
                 raw, tokens = await self._ollama.chat(model=model_id, system=prompt.text, user="\n\n".join(text_parts),
                                                       images=images, schema=json_schema,
-                                                      num_ctx=self.settings.ollama_num_ctx)
+                                                      num_ctx=self.settings.ollama_num_ctx,
+                                                      num_predict=self.settings.ollama_num_predict)
                 meter.charge(prompt, f"ollama:{model_id}", tokens, int((time.monotonic() - started) * 1000))
                 return schema.model_validate_json(raw)
             except ValidationError as exc:
@@ -200,7 +201,7 @@ class OllamaClient:
         self.timeout = timeout
 
     async def chat(self, *, model: str, system: str, user: str, images: list[bytes], schema: dict,
-                   num_ctx: int = 8192) -> tuple[str, int]:
+                   num_ctx: int = 8192, num_predict: int = 1536) -> tuple[str, int]:
         import base64
 
         import httpx
@@ -210,7 +211,8 @@ class OllamaClient:
             message["images"] = [base64.b64encode(i).decode("ascii") for i in images]
         body = {"model": model, "stream": False, "format": schema,
                 "messages": [{"role": "system", "content": system}, message],
-                "options": {"temperature": 0, "num_ctx": num_ctx}}
+                "options": {"temperature": 0, "num_ctx": num_ctx, "num_predict": num_predict,
+                            "repeat_penalty": 1.15}}
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=body)
             response.raise_for_status()

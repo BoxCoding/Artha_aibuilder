@@ -1,4 +1,4 @@
-# ARTHA evaluation report
+# LedgerLens evaluation report
 
 Generated 2026-09-27 on a labelled synthetic population of 120 statements (22439 transaction rows). Every statement is produced by `app/synthetic/generator.py`, which records exactly what it altered, so these are measurements against ground truth rather than self-assessment. Rates on a synthetic population are an engineering signal, not evidence of real-world accuracy.
 

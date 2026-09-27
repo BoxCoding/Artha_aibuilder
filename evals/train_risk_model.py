@@ -85,7 +85,7 @@ def fit_scorecard_intercept(rows: list[dict[str, float]], labels: list[int]) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Train the ARTHA risk challenger model.")
+    parser = argparse.ArgumentParser(description="Train the LedgerLens risk challenger model.")
     parser.add_argument("--n", type=int, default=1500)
     parser.add_argument("--seed", type=int, default=20260926)
     args = parser.parse_args()

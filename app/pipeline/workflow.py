@@ -182,12 +182,22 @@ async def categorise(rc: RunContext) -> dict[str, str | int | float]:
     unmatched = apply_rules(rc.case.transactions)
     by_model = 0
     gateway = get_gateway()
+    settings = get_settings()
+    share = len(unmatched) / max(1, len(rc.case.transactions))
+    skipped = ""
     if unmatched and gateway.enabled:
-        try:
-            by_model = await categorise_with_gemini(unmatched, gateway, rc.meter)
-        except LLMUnavailable:
-            by_model = 0
-    return {"by_rules": len(rc.case.transactions) - len(unmatched), "by_gemini": by_model}
+        if share < settings.llm_categorise_min_share:
+            skipped = "rules_sufficient"
+        else:
+            # Categories feed the score, so this sits before the recommendation: it gets a strict time
+            # budget, and on timeout the rule categories stand (unmatched rows stay "other").
+            try:
+                by_model = await asyncio.wait_for(categorise_with_gemini(unmatched, gateway, rc.meter),
+                                                  timeout=settings.llm_categorise_timeout_seconds)
+            except (LLMUnavailable, TimeoutError):
+                skipped = "model_timeout_or_unavailable"
+    return {"by_rules": len(rc.case.transactions) - len(unmatched), "by_model": by_model,
+            "unmatched": len(unmatched), "model_skipped": skipped or "no"}
 
 
 @step("forensics")

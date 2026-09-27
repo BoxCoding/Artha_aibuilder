@@ -3,8 +3,8 @@
 By default the whole suite runs through the SQL store on a throwaway SQLite file, so every API
 test also exercises persistence. Override with:
 
-    ARTHA_TEST_DATABASE_URL=memory                                   # the in-memory store
-    ARTHA_TEST_DATABASE_URL=postgresql+psycopg://.../artha_test      # a real PostgreSQL
+    LEDGERLENS_TEST_DATABASE_URL=memory                                   # the in-memory store
+    LEDGERLENS_TEST_DATABASE_URL=postgresql+psycopg://.../artha_test      # a real PostgreSQL
 
 The PostgreSQL database is wiped at the start of the run.
 """
@@ -15,7 +15,7 @@ import tempfile
 
 import pytest
 
-_target = os.environ.get("ARTHA_TEST_DATABASE_URL", "sqlite")
+_target = os.environ.get("LEDGERLENS_TEST_DATABASE_URL", "sqlite")
 os.environ["APP_ENV"] = "test"
 os.environ["DEMO_MODE"] = "true"
 os.environ["LLM_MODE"] = "offline"
@@ -29,8 +29,9 @@ elif _target == "sqlite":
 else:
     os.environ["DATABASE_URL"] = _target
 
-from app.config import get_settings  # noqa: E402
+from app.config import Settings, get_settings  # noqa: E402
 
+Settings.model_config["env_file"] = None  # a developer's .env must never leak into the test run
 get_settings.cache_clear()
 
 if os.environ.get("DATABASE_URL"):

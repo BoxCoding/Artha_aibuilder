@@ -1,12 +1,12 @@
-# Deploying ARTHA
+# Deploying LedgerLens
 
 Two Cloud Run services and one Cloud Run job, all from the same image:
 
 | Name | Kind | Command | Notes |
 | --- | --- | --- | --- |
-| `artha` | service | uvicorn (image default) | User traffic. Stateless, so it autoscales. |
-| `artha-worker` | service | `python -m app.worker` | Internal ingress, CPU always allocated, min 1 instance. Answers health checks on `$PORT`. |
-| `artha-migrate` | job | `alembic upgrade head` | Runs in Cloud Build before each deploy. |
+| `ledgerlens` | service | uvicorn (image default) | User traffic. Stateless, so it autoscales. |
+| `ledgerlens-worker` | service | `python -m app.worker` | Internal ingress, CPU always allocated, min 1 instance. Answers health checks on `$PORT`. |
+| `ledgerlens-migrate` | job | `alembic upgrade head` | Runs in Cloud Build before each deploy. |
 
 State lives in Cloud SQL for PostgreSQL. Secrets live in Secret Manager.
 
@@ -20,11 +20,11 @@ gcloud services enable run.googleapis.com aiplatform.googleapis.com cloudbuild.g
   artifactregistry.googleapis.com secretmanager.googleapis.com sqladmin.googleapis.com \
   modelarmor.googleapis.com
 
-gcloud artifacts repositories create artha --repository-format=docker --location=$REGION
+gcloud artifacts repositories create ledgerlens --repository-format=docker --location=$REGION
 
 # Runtime identity: model access, Cloud SQL, its own secrets. Nothing else.
-gcloud iam service-accounts create artha-run --display-name="ARTHA Cloud Run"
-SA=artha-run@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts create ledgerlens-run --display-name="LedgerLens Cloud Run"
+SA=ledgerlens-run@$PROJECT_ID.iam.gserviceaccount.com
 for role in roles/aiplatform.user roles/cloudsql.client; do
   gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:$SA" --role=$role
 done
@@ -33,16 +33,16 @@ done
 ### Database
 
 ```bash
-gcloud sql instances create artha-db --database-version=POSTGRES_17 --region=$REGION \
+gcloud sql instances create ledgerlens-db --database-version=POSTGRES_17 --region=$REGION \
   --tier=db-custom-2-7680 --availability-type=REGIONAL --storage-auto-increase \
   --backup-start-time=20:30 --enable-point-in-time-recovery --deletion-protection
-gcloud sql databases create artha --instance=artha-db
+gcloud sql databases create ledgerlens --instance=ledgerlens-db
 DB_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
-gcloud sql users create artha --instance=artha-db --password="$DB_PASSWORD"
+gcloud sql users create ledgerlens --instance=ledgerlens-db --password="$DB_PASSWORD"
 
 # Cloud Run mounts the instance's Unix socket under /cloudsql.
-printf 'postgresql+psycopg://artha:%s@/artha?host=/cloudsql/%s:%s:artha-db' "$DB_PASSWORD" "$PROJECT_ID" "$REGION" | \
-  gcloud secrets create artha-database-url --data-file=-
+printf 'postgresql+psycopg://ledgerlens:%s@/ledgerlens?host=/cloudsql/%s:%s:ledgerlens-db' "$DB_PASSWORD" "$PROJECT_ID" "$REGION" | \
+  gcloud secrets create ledgerlens-database-url --data-file=-
 ```
 
 Connection budget: each API instance holds up to `DB_POOL_SIZE + DB_MAX_OVERFLOW` (default 10)
@@ -53,10 +53,10 @@ the workers; size the instance tier or lower the pool settings to match.
 
 ```bash
 python -m app.cli generate-secrets   # prints SECRET_KEY=... and RECEIPT_SIGNING_SEED=...
-printf '%s' '<SECRET_KEY value>'           | gcloud secrets create artha-session-key --data-file=-
-printf '%s' '<RECEIPT_SIGNING_SEED value>' | gcloud secrets create artha-receipt-seed --data-file=-
+printf '%s' '<SECRET_KEY value>'           | gcloud secrets create ledgerlens-session-key --data-file=-
+printf '%s' '<RECEIPT_SIGNING_SEED value>' | gcloud secrets create ledgerlens-receipt-seed --data-file=-
 
-for s in artha-session-key artha-receipt-seed artha-database-url; do
+for s in ledgerlens-session-key ledgerlens-receipt-seed ledgerlens-database-url; do
   gcloud secrets add-iam-policy-binding $s --member="serviceAccount:$SA" \
     --role="roles/secretmanager.secretAccessor"
 done
@@ -68,7 +68,7 @@ rotate it, publish the old public key alongside the new one before switching.
 ## Optional: Model Armor template
 
 ```bash
-gcloud model-armor templates create artha-guard --location=$REGION \
+gcloud model-armor templates create ledgerlens-guard --location=$REGION \
   --pi-and-jailbreak-filter-settings-enforcement=enabled \
   --pi-and-jailbreak-filter-settings-confidence-level=LOW_AND_ABOVE \
   --malicious-uri-filter-settings-enforcement=enabled
@@ -91,12 +91,12 @@ release later).
 ## First staff account
 
 ```bash
-gcloud run jobs create artha-admin --image=$REGION-docker.pkg.dev/$PROJECT_ID/artha/api:<sha> \
-  --region=$REGION --service-account=$SA --set-cloudsql-instances=$PROJECT_ID:$REGION:artha-db \
-  --set-secrets=DATABASE_URL=artha-database-url:latest,SECRET_KEY=artha-session-key:latest,RECEIPT_SIGNING_SEED=artha-receipt-seed:latest \
+gcloud run jobs create ledgerlens-admin --image=$REGION-docker.pkg.dev/$PROJECT_ID/ledgerlens/api:<sha> \
+  --region=$REGION --service-account=$SA --set-cloudsql-instances=$PROJECT_ID:$REGION:ledgerlens-db \
+  --set-secrets=DATABASE_URL=ledgerlens-database-url:latest,SECRET_KEY=ledgerlens-session-key:latest,RECEIPT_SIGNING_SEED=ledgerlens-receipt-seed:latest \
   --set-env-vars=APP_ENV=prod,DEMO_MODE=false,PIPELINE_MODE=queue \
   --command=python --args=-m,app.cli,create-user,risk@lender.example,"Risk Lead",risk_admin
-gcloud run jobs execute artha-admin --region=$REGION --update-env-vars=ARTHA_PASSWORD='<a long passphrase>' --wait
+gcloud run jobs execute ledgerlens-admin --region=$REGION --update-env-vars=LEDGERLENS_PASSWORD='<a long passphrase>' --wait
 ```
 
 Or, from a workstation with the Cloud SQL Auth Proxy running, set `DATABASE_URL` locally and run

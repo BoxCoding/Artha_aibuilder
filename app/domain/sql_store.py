@@ -101,6 +101,10 @@ class SqlStore:
         return [owner_row(r.case_id, r.business_name, r.status, r.created_at, r.updated_at, r.summary,
                           include_assessment) for r in rows]
 
+    def ids_with_status(self, status: CaseStatus) -> list[str]:
+        with self.engine.connect() as conn:
+            return list(conn.execute(select(cases.c.case_id).where(cases.c.status == status.value)).scalars())
+
     def summaries(self) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
             rows = conn.execute(select(cases.c.case_id, cases.c.summary)).all()

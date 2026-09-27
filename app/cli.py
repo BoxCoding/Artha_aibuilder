@@ -3,7 +3,7 @@
     generate-secrets                         print a SECRET_KEY and RECEIPT_SIGNING_SEED
     init-db                                  create tables directly (SQLite / throwaway databases only;
                                              production uses `alembic upgrade head`)
-    create-user EMAIL NAME ROLE              create an account; password read from ARTHA_PASSWORD or a prompt
+    create-user EMAIL NAME ROLE              create an account; password read from LEDGERLENS_PASSWORD or a prompt
     set-password EMAIL                       replace a password and sign the user out everywhere
     disable-user EMAIL / enable-user EMAIL   block or restore an account (revokes sessions)
     list-users
@@ -23,7 +23,7 @@ from app.domain.models import Role
 
 
 def _password() -> str:
-    from_env = os.environ.get("ARTHA_PASSWORD")
+    from_env = os.environ.get("LEDGERLENS_PASSWORD")
     if from_env:
         return from_env
     first = getpass.getpass("Password: ")

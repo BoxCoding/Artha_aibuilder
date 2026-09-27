@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ARTHA — evidence-first lending</title>
-<meta name="description" content="ARTHA reads a small business's bank statements, checks they are genuine, and gives an underwriter an evidence-linked recommendation.">
-<link rel="stylesheet" href="/static/styles.css">
+<title>LedgerLens — bank-statement underwriting</title>
+<meta name="description" content="LedgerLens reads a small business's bank statements, checks they are genuine, and gives an underwriter an evidence-linked recommendation.">
+<link rel="stylesheet" href="/static/styles.css?v=__ASSET_VERSION__">
 <link rel="icon" href="data:,">
 </head>
 <body>
 <header class="masthead">
   <div class="wrap">
-    <div class="mark">ARTHA<span>evidence-first lending</span></div>
+    <div class="mark">LedgerLens<span>see what the statement isn't telling you</span></div>
     <nav id="nav"></nav>
   </div>
 </header>
@@ -22,9 +22,9 @@
     <div>
       <h1>A thin file is not the same as a bad borrower.</h1>
       <p class="muted">Millions of small businesses have no credit history, only a bank statement — and a statement
-        can be edited in a browser in about a minute. ARTHA reads the statement, checks the file itself for signs of
-        editing, and hands an underwriter a recommendation where every sentence points back to the row it came from.
-        The underwriter decides; the applicant gets told why, in their own language.</p>
+        can be edited in a browser in about a minute. LedgerLens reads the statement, checks the file itself for signs of
+        editing, and hands a credit officer a recommendation where every sentence points back to the row it came from.
+        A person decides; the applicant is told why, in their own language.</p>
       <form class="auth sheet" id="auth" novalidate></form>
       <p class="small muted" id="gate-note" role="alert"></p>
       <div id="demo-block" class="hidden">
@@ -37,7 +37,7 @@
 
   <!-- borrower -->
   <section id="view-apply" class="hidden">
-    <h1>Apply for working capital</h1>
+    <h1 id="apply-title">Apply for working capital</h1>
     <div class="sheet" id="apply-form"></div>
   </section>
 
@@ -50,11 +50,11 @@
 
   <section id="view-mine" class="hidden">
     <div class="spread">
-      <h1>Your applications</h1>
+      <h1 id="mine-title">Your applications</h1>
       <button class="stamp" id="mine-new">New application</button>
     </div>
     <table class="queue-table">
-      <thead><tr><th>Business</th><th>Requested</th><th>Submitted</th><th>Status</th></tr></thead>
+      <thead id="mine-head"></thead>
       <tbody id="mine-body"></tbody>
     </table>
   </section>
@@ -107,6 +107,46 @@
     </div>
   </section>
 
+  <!-- administration -->
+  <section id="view-team" class="hidden">
+    <h1>Team</h1>
+    <p class="muted">Loan officers onboard customers and see instant recommendations. Credit officers sanction.
+      Admins manage the team and see risk and audit.</p>
+    <table class="queue-table audit-users">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody id="team-body"></tbody>
+    </table>
+    <form class="auth sheet" id="team-form">
+      <h2>Add a team member</h2>
+      <div class="field"><label for="t-name">Name</label><input id="t-name" required maxlength="120"></div>
+      <div class="field"><label for="t-email">Work email</label><input id="t-email" type="email" required maxlength="254"></div>
+      <div class="field"><label for="t-role">Role</label>
+        <select id="t-role">
+          <option value="loan_officer">Loan officer</option>
+          <option value="underwriter">Credit officer</option>
+          <option value="risk_admin">Admin</option>
+        </select></div>
+      <div class="field"><label for="t-password">Initial password (12+ characters)</label>
+        <input id="t-password" type="password" required minlength="12" autocomplete="new-password"></div>
+      <div class="actions"><button class="stamp" type="submit">Create account</button></div>
+      <p class="small muted" id="team-note" role="status"></p>
+    </form>
+  </section>
+
+  <section id="view-account" class="hidden">
+    <h1>Account</h1>
+    <p class="muted" id="account-who"></p>
+    <form class="auth sheet" id="account-form">
+      <h2>Change password</h2>
+      <div class="field"><label for="p-current">Current password</label>
+        <input id="p-current" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label for="p-new">New password (12+ characters)</label>
+        <input id="p-new" type="password" required minlength="12" autocomplete="new-password"></div>
+      <div class="actions"><button class="stamp" type="submit">Change password</button></div>
+      <p class="small muted" id="account-note" role="status"></p>
+    </form>
+  </section>
+
   <!-- risk -->
   <section id="view-risk" class="hidden">
     <h1>Risk and assurance</h1>
@@ -123,6 +163,6 @@
   </section>
 </main>
 
-<script src="/static/app.js" type="module"></script>
+<script src="/static/app.js?v=__ASSET_VERSION__" type="module"></script>
 </body>
 </html>

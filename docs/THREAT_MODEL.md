@@ -43,6 +43,10 @@ rests on.
 | 24 | Two underwriters racing a decision, or self-countersigning | Decision check-and-set runs under the case row lock; a countersignature must match the proposal exactly and come from a different account | `api/main.py`, `domain/sql_store.py` |
 | 25 | Retrospective audit tampering by the application or an operator using its role | Append-only trigger on `audit_log` in PostgreSQL, advisory-locked appends, `python -m app.cli verify-audit` | `migrations/`, `domain/sql_store.py` |
 | 26 | Unsafe production configuration | The service refuses to start in prod with a weak secret, demo mode, no database, no persistent receipt key or an in-process pipeline | `config.py` |
+| 28 | Customer PII (PAN, mobile, address) exposure | Aadhaar never collected; PAN masked in lists; PII masked before any model call; customers see only their own applications and loan officers only those they sourced; no identity numbers in receipts or logs | `domain/kyc.py`, `api/views.py`, `security/masking.py` |
+| 29 | Statement PDF passwords | Used once to decrypt at upload and discarded, never stored or logged; the original file's digest and metadata are kept for forensics | `documents/intake.py` |
+| 30 | A misread statement treated as a forgery | Universal reader and model extraction must reconcile the running balance or the file is refused / sent to a person | `documents/universal_reader.py`, `pipeline/workflow.py` |
+| 31 | Customer data sent to a third-party model | `LLM_MODE=ollama` keeps every model call on your own infrastructure | `ai/gateway.py` |
 | 27 | Lost work on restart | Cases, documents and jobs in PostgreSQL; worker leases expire and are reclaimed; jobs that keep failing park the case for a person | `pipeline/jobs.py`, `worker.py` |
 
 ## Accepted risks

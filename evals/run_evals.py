@@ -1,6 +1,6 @@
 """Evaluation harness.
 
-Measures the claims ARTHA makes, on a labelled synthetic population:
+Measures the claims LedgerLens makes, on a labelled synthetic population:
   1. tampering detection  - recall, false-positive rate, per-pattern breakdown
   2. extraction accuracy  - row-level agreement with generator ground truth
   3. memo groundedness    - share of claims with resolvable citations and approved figures
@@ -187,7 +187,7 @@ def check_gates(metrics: dict[str, object]) -> list[str]:
 def write_report(metrics: dict[str, object], failures: list[str]) -> Path:
     m = metrics
     lines = [
-        "# ARTHA evaluation report",
+        "# LedgerLens evaluation report",
         "",
         f"Generated {m['generated_at']} on a labelled synthetic population of {m['population']} statements "
         f"({m['counts']['rows']} transaction rows). Every statement is produced by "  # type: ignore[index]
@@ -277,7 +277,7 @@ def write_report(metrics: dict[str, object], failures: list[str]) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the ARTHA evaluation suite.")
+    parser = argparse.ArgumentParser(description="Run the LedgerLens evaluation suite.")
     parser.add_argument("--n", type=int, default=120, help="population size")
     parser.add_argument("--memo-sample", type=int, default=25, help="cases that also get a memo written and critiqued")
     args = parser.parse_args()

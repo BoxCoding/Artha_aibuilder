@@ -1,4 +1,4 @@
-/* ARTHA front end. No inline scripts or styles: the page is served under a strict CSP.
+/* LedgerLens front end. No inline scripts or styles: the page is served under a strict CSP.
    Text is built with textContent, never innerHTML, so document content can never become markup. */
 
 const $ = (id) => document.getElementById(id);
@@ -23,12 +23,37 @@ async function api(path, options = {}) {
   if (!response.ok) {
     let detail = "Something went wrong.";
     try { detail = (await response.json()).detail || detail; } catch { /* non-JSON error */ }
-    throw new Error(detail);
+    throw new Error(Array.isArray(detail) ? describeValidation(detail) : String(detail));
   }
   return response.status === 204 ? null : response.json();
 }
 
-const VIEWS = ["gate", "apply", "progress", "mine", "outcome", "queue", "case", "risk"];
+const FIELD_LABELS = {
+  full_name: "Full name", mobile: "Mobile number", email: "Email", pan: "PAN", date_of_birth: "Date of birth",
+  business_name: "Business name", constitution: "Constitution", industry: "Industry",
+  business_start_year: "Year business started", udyam_number: "Udyam number", gstin: "GSTIN",
+  address_line: "Address", city: "City", state: "State", pincode: "PIN code", loan_purpose: "Purpose",
+  requested_amount: "Amount", tenure_months: "Repay over", password: "Password", name: "Name",
+};
+
+/* FastAPI reports form problems as a list; turn it into sentences and mark the fields concerned. */
+function describeValidation(errors) {
+  document.querySelectorAll("[aria-invalid='true']").forEach((node) => node.removeAttribute("aria-invalid"));
+  return errors.map((e) => {
+    const loc = Array.isArray(e.loc) ? e.loc.filter((part) => typeof part === "string" && part !== "body") : [];
+    const key = loc[loc.length - 1];
+    const input = key && (document.getElementById(`a-${key}`) || document.getElementById(`f-${key}`));
+    if (input) input.setAttribute("aria-invalid", "true");
+    const message = String(e.msg || "is not valid").replace(/^Value error, /, "");
+    const label = FIELD_LABELS[key];
+    if (!label) return message;
+    return /^(String should have at least|Field required|Input should)/.test(message)
+      ? `${label}: ${message.replace("String should have at least", "needs at least").replace("Field required", "required")}`
+      : `${label}: ${message}`;
+  }).join(" ");
+}
+
+const VIEWS = ["gate", "apply", "progress", "mine", "outcome", "queue", "case", "risk", "team", "account"];
 let viewToken = 0; // bumped on every view change, so a background poll knows when to stop
 function show(name) {
   viewToken += 1;
@@ -91,7 +116,9 @@ function renderGate() {
 function renderAuthForm() {
   const form = $("auth");
   clear(form);
-  const registering = state.authMode === "register";
+  if (state.config?.needs_setup && !state.config?.demo_mode) state.authMode = "setup";
+  const registering = state.authMode === "register" || state.authMode === "setup";
+  const setup = state.authMode === "setup";
   const field = (label, type, id, autocomplete) => {
     const wrap = el("div", "field");
     const input = el("input");
@@ -102,7 +129,9 @@ function renderAuthForm() {
     form.appendChild(wrap);
     return input;
   };
-  form.appendChild(el("h2", null, registering ? "Create a borrower account" : "Sign in"));
+  form.appendChild(el("h2", null, setup ? "Set up LedgerLens" : registering ? "Create a customer account" : "Sign in"));
+  if (setup) form.appendChild(el("p", "small muted", "No administrator exists yet. Create the first admin account; "
+    + "you'll then add loan officers and credit officers from the Team page."));
   const name = registering ? field("Your name", "text", "a-name", "name") : null;
   const email = field("Email", "email", "a-email", "username");
   const password = field("Password", "password", "a-password", registering ? "new-password" : "current-password");
@@ -111,10 +140,10 @@ function renderAuthForm() {
     form.appendChild(el("p", "small muted", `At least ${password.minLength} characters. A short phrase works well.`));
   }
   const actions = el("div", "actions");
-  const submit = el("button", "stamp", registering ? "Create account" : "Sign in");
+  const submit = el("button", "stamp", setup ? "Create admin account" : registering ? "Create account" : "Sign in");
   submit.type = "submit";
   actions.appendChild(submit);
-  if (state.config?.registration) {
+  if (state.config?.registration && !setup) {
     const toggle = el("button", "switch", registering ? "I already have an account" : "New here? Create an account");
     toggle.type = "button";
     toggle.addEventListener("click", () => {
@@ -129,13 +158,25 @@ function renderAuthForm() {
     event.preventDefault();
     submit.disabled = true;
     try {
-      if (registering) await register(name.value.trim(), email.value.trim(), password.value);
+      if (setup) await firstAdmin(name.value.trim(), email.value.trim(), password.value);
+      else if (registering) await register(name.value.trim(), email.value.trim(), password.value);
       else await signIn({ email: email.value.trim(), password: password.value });
     } finally {
       submit.disabled = false;
       password.value = "";
     }
   };
+}
+
+async function firstAdmin(name, email, password) {
+  try {
+    await api("/api/setup", { method: "POST", body: JSON.stringify({ name, email, password, role: "risk_admin" }) });
+    state.config.needs_setup = false;
+    state.authMode = "signin";
+    state.me = await api("/api/me");
+    afterSignIn();
+    loadTeam();
+  } catch (error) { $("gate-note").textContent = error.message; }
 }
 
 async function register(name, email, password) {
@@ -170,11 +211,11 @@ function renderSpecimen() {
   const text = el("span");
   text.appendChild(el("b", null, "This deposit was typed in later. "));
   text.appendChild(document.createTextNode("It is set in a different font from every other amount in the column, "
-    + "and the balance on the next row never absorbs it. ARTHA marks the cell, cites it in the memo, and sends the "
+    + "and the balance on the next row never absorbs it. LedgerLens marks the cell, cites it in the memo, and sends the "
     + "case to a human rather than declining anyone on its own."));
   note.append(el("i"), text);
   host.appendChild(note);
-  host.appendChild(el("p", "spec-caption", "Synthetic statement. No real account, bank or person is shown anywhere in this prototype."));
+  host.appendChild(el("p", "spec-caption", "Illustration: a fictional bank and account."));
 }
 
 async function signIn(credentials) {
@@ -188,7 +229,7 @@ async function signIn(credentials) {
 
 function afterSignIn() {
   renderNav();
-  if (state.me.role === "borrower") loadMine();
+  if (state.me.role === "borrower" || state.me.role === "loan_officer") loadMine();
   else if (state.me.role === "underwriter") loadQueue();
   else loadRisk();
 }
@@ -197,15 +238,23 @@ function renderNav() {
   const nav = $("nav");
   clear(nav);
   if (!state.me) return;
-  const links = state.me.role === "borrower" ? [["My applications", loadMine], ["New application", renderApply]]
-    : state.me.role === "underwriter" ? [["Queue", loadQueue]]
-    : [["Risk", loadRisk], ["Queue", loadQueue]];
+  const links = {
+    borrower: [["My applications", loadMine], ["New application", renderApply]],
+    loan_officer: [["My applications", loadMine], ["New customer", renderApply]],
+    underwriter: [["Credit queue", loadQueue]],
+    risk_admin: [["Risk", loadRisk], ["Credit queue", loadQueue], ["Team", loadTeam]],
+  }[state.me.role] || [];
+  links.push(["Account", renderAccount]);
   links.forEach(([label, handler]) => {
     const button = el("button", "ghost", label);
     button.addEventListener("click", handler);
     nav.appendChild(button);
   });
-  nav.appendChild(el("span", "small muted", `${state.me.name} · ${state.me.ai_mode} mode`));
+  const roleName = { borrower: "Customer", loan_officer: "Loan officer", underwriter: "Credit officer",
+                     risk_admin: "Admin" }[state.me.role];
+  const ai = state.me.ai;
+  const aiText = !ai ? "" : ai.mode === "offline" ? " · AI off" : ai.reachable === false ? " · AI unavailable" : ` · AI: ${ai.model || ai.mode}`;
+  nav.appendChild(el("span", "small muted", `${state.me.name} · ${roleName}${aiText}`));
   const out = el("button", "ghost", "Sign out");
   out.addEventListener("click", async () => {
     try { await api("/api/session", { method: "DELETE" }); } catch { /* signing out locally regardless */ }
@@ -214,117 +263,367 @@ function renderNav() {
   nav.appendChild(out);
 }
 
+/* ------------------------------------------------------------------ team (admin) */
+
+const ROLE_LABEL = { borrower: "Customer", loan_officer: "Loan officer", underwriter: "Credit officer", risk_admin: "Admin" };
+
+async function loadTeam() {
+  show("team");
+  const { users } = await api("/api/admin/users");
+  const body = $("team-body");
+  clear(body);
+  users.filter((u) => !u.demo || state.config?.demo_mode).forEach((u) => {
+    const row = el("tr");
+    const action = el("td");
+    if (u.uid !== state.me.uid) {
+      const toggle = el("button", "ghost small-btn", u.active ? "Disable" : "Enable");
+      toggle.addEventListener("click", async () => {
+        try { await api(`/api/admin/users/${encodeURIComponent(u.uid)}/${u.active ? "disable" : "enable"}`, { method: "POST" }); loadTeam(); }
+        catch (error) { $("team-note").textContent = error.message; }
+      });
+      action.appendChild(toggle);
+    }
+    row.append(el("td", null, u.name), el("td", null, u.email), el("td", null, ROLE_LABEL[u.role] || u.role),
+               el("td", null, !u.active ? "disabled" : u.locked ? "locked (too many attempts)" : "active"),
+               el("td", null, u.last_login_at ? new Date(u.last_login_at).toLocaleString("en-IN") : "never"), action);
+    body.appendChild(row);
+  });
+  const form = $("team-form");
+  if (!form.dataset.ready) {
+    form.dataset.ready = "1";
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const payload = { name: $("t-name").value.trim(), email: $("t-email").value.trim(), role: $("t-role").value,
+                        password: $("t-password").value };
+      try {
+        await api("/api/admin/users", { method: "POST", body: JSON.stringify(payload) });
+        $("team-note").textContent = `Account created for ${payload.email}. Share the password with them securely; `
+          + "they can change it under Account.";
+        form.reset();
+        loadTeam();
+      } catch (error) { $("team-note").textContent = error.message; }
+    };
+  }
+}
+
+function renderAccount() {
+  show("account");
+  const form = $("account-form");
+  $("account-who").textContent = `${state.me.name} · ${ROLE_LABEL[state.me.role]}`;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/me/password", { method: "POST", body: JSON.stringify({
+        current_password: $("p-current").value, new_password: $("p-new").value }) });
+      $("account-note").textContent = "Password changed. Other devices have been signed out.";
+      form.reset();
+    } catch (error) { $("account-note").textContent = error.message; }
+  };
+}
+
 /* ------------------------------------------------------------------ borrower */
+
+/* ------------------------------------------------------------------ application: details, then statements */
+
+const INDIAN_STATES = ["Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+  "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa", "Gujarat", "Haryana",
+  "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Ladakh", "Lakshadweep",
+  "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
+  "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal"];
+const INDUSTRIES = ["Retail trade", "Wholesale trade", "Food and restaurants", "Manufacturing", "Transport and logistics",
+  "Construction", "Services", "Agriculture and allied", "Textiles and apparel", "Healthcare", "Education", "Other"];
+const CONSTITUTIONS = [["proprietorship", "Proprietorship"], ["partnership", "Partnership"], ["llp", "LLP"],
+  ["private_limited", "Private limited company"], ["other", "Other"]];
+
+function control(tag, id, attrs = {}) {
+  const node = el(tag);
+  node.id = id;
+  Object.entries(attrs).forEach(([k, v]) => { node[k] = v; });
+  return node;
+}
+function options(select, pairs, selected) {
+  pairs.forEach(([value, label]) => {
+    const o = el("option", null, label); o.value = value; if (value === selected) o.selected = true; select.appendChild(o);
+  });
+  return select;
+}
+function field(grid, label, node, hint) {
+  const wrap = el("div", "field");
+  const lab = el("label", null, label);
+  lab.htmlFor = node.id;
+  wrap.append(lab, node);
+  if (hint) wrap.appendChild(el("span", "hint", hint));
+  grid.appendChild(wrap);
+  return wrap;
+}
 
 function renderApply() {
   show("apply");
+  const officer = state.me.role === "loan_officer";
+  $("apply-title").textContent = officer ? "New customer application" : "Apply for working capital";
   const form = $("apply-form");
   clear(form);
-  const fields = el("div", "wrap");
-  const add = (label, control) => {
-    const field = el("div", "field");
-    const lab = el("label", null, label);
-    lab.htmlFor = control.id;
-    field.append(lab, control);
-    fields.appendChild(field);
+  state.caseId = null;
+
+  const sections = [];
+  const section = (title, note) => {
+    const box = el("fieldset", "form-section");
+    box.appendChild(el("legend", null, title));
+    if (note) box.appendChild(el("p", "small muted", note));
+    const grid = el("div", "form-grid");
+    box.appendChild(grid);
+    form.appendChild(box);
+    sections.push(box);
+    return grid;
   };
-  const name = el("input"); name.id = "f-name"; name.maxLength = 80;
-  if (state.config?.demo_mode) name.value = "Meena's Home Kitchen";
-  const amount = el("input"); amount.id = "f-amount"; amount.type = "number"; amount.value = "300000";
-  amount.min = "50000"; amount.max = "1000000"; amount.step = "5000";
-  const tenure = el("select"); tenure.id = "f-tenure";
-  [12, 18, 24, 36].forEach((m) => { const o = el("option", null, `${m} months`); o.value = String(m); if (m === 24) o.selected = true; tenure.appendChild(o); });
-  const lang = el("select"); lang.id = "f-lang";
-  [["en", "English"], ["hi", "हिन्दी"], ["id", "Bahasa Indonesia"]].forEach(([v, t]) => {
-    const o = el("option", null, t); o.value = v; if (v === "hi") o.selected = true; lang.appendChild(o);
-  });
-  const demo = Boolean(state.config?.demo_mode);
-  const files = el("input"); files.id = "f-files"; files.type = "file"; files.accept = "application/pdf,.pdf";
-  files.multiple = true;
-  const fileList = el("ul", "file-list");
-  files.addEventListener("change", () => {
-    clear(fileList);
-    Array.from(files.files).forEach((f) => fileList.appendChild(el("li", null, `${f.name} · ${Math.ceil(f.size / 1024)} KB`)));
-  });
-  const sample = el("select"); sample.id = "f-sample";
-  [["", "Upload my own statement"],
-   ["meena", "Sample: Meena's Home Kitchen — steady UPI income"],
-   ["rapid", "Sample: Rapid Auto Spares — statement has been edited"],
-   ["kiran", "Sample: Kiran Logistics — bounced instalments"]].forEach(([v, t]) => {
-    const o = el("option", null, t); o.value = v; if (v === "meena") o.selected = true; sample.appendChild(o);
-  });
 
-  add("Business name", name);
-  add("Amount needed (₹)", amount);
-  add("Repay over", tenure);
-  add("Language for your result", lang);
-  if (demo) add("Bank statement", sample);
-  add("Bank statements (PDF, up to 3, last six months)", files);
-  fields.lastChild.appendChild(fileList);
-  const fileField = fields.lastChild;
-  const syncSource = () => fileField.classList.toggle("hidden", demo && sample.value !== "");
-  sample.addEventListener("change", syncSource);
-  syncSource();
+  const person = section(officer ? "Customer" : "About you",
+    "As on the customer's PAN card. Aadhaar is not collected.");
+  const fullName = field(person, "Full name", control("input", "a-full_name", { maxLength: 120, autocomplete: "name",
+    value: officer ? "" : (state.me.name || "") })).lastChild;
+  field(person, "Mobile number", control("input", "a-mobile", { inputMode: "numeric", maxLength: 14, autocomplete: "tel",
+    placeholder: "10-digit mobile" }));
+  field(person, "Email (optional)", control("input", "a-email", { type: "email", maxLength: 254 }));
+  field(person, "PAN", control("input", "a-pan", { maxLength: 10, placeholder: "ABCPE1234F" }), "Individual PAN for a proprietor");
+  field(person, "Date of birth", control("input", "a-date_of_birth", { type: "date" }));
+  fullName.required = true;
 
-  const consentBox = el("div", "field");
+  const business = section("Business");
+  field(business, "Business name", control("input", "a-business_name", { maxLength: 120 }));
+  field(business, "Constitution", options(control("select", "a-constitution"), CONSTITUTIONS, "proprietorship"));
+  field(business, "Industry", options(control("select", "a-industry"), INDUSTRIES.map((i) => [i, i]), "Retail trade"));
+  field(business, "Year business started", control("input", "a-business_start_year", { type: "number", min: 1950, max: 2100 }));
+  field(business, "Udyam registration (optional)", control("input", "a-udyam_number", { placeholder: "UDYAM-KA-03-0012345", maxLength: 22 }));
+  field(business, "GSTIN (optional)", control("input", "a-gstin", { maxLength: 15, placeholder: "29ABCPE1234F1Z5" }));
+
+  const address = section("Business address");
+  field(address, "Address", control("input", "a-address_line", { maxLength: 200, autocomplete: "street-address" }));
+  field(address, "City", control("input", "a-city", { maxLength: 60 }));
+  field(address, "State", options(control("select", "a-state"), INDIAN_STATES.map((x) => [x, x]), "Karnataka"));
+  field(address, "PIN code", control("input", "a-pincode", { inputMode: "numeric", maxLength: 6 }));
+
+  const loan = section("Loan");
+  field(loan, "Amount needed (₹)", control("input", "f-amount", { type: "number", value: "300000", min: 50000,
+    max: 1000000, step: 5000 }), "₹50,000 to ₹10,00,000");
+  field(loan, "Repay over", options(control("select", "f-tenure"), [12, 18, 24, 36].map((m) => [String(m), `${m} months`]), "24"));
+  field(loan, "Purpose", control("input", "a-loan_purpose", { value: "Working capital", maxLength: 200 }));
+  field(loan, "Language for the result", options(control("select", "f-lang"),
+    [["en", "English"], ["hi", "हिन्दी"], ["id", "Bahasa Indonesia"]], "en"));
+
+  const consentBox = el("div", "field consent");
   const consentLabel = el("label", "small");
-  const check = el("input"); check.type = "checkbox"; check.id = "f-consent"; check.checked = true;
-  const text = el("span", null, " I allow ARTHA to read these bank statements to assess this loan, and to keep the "
-    + "result for the lender's records for the retention period. I can ask for my application to be deleted.");
-  consentLabel.append(check, text);
+  const check = control("input", "f-consent", { type: "checkbox" });
+  consentLabel.append(check, el("span", null, officer
+    ? " The customer has consented to LedgerLens reading their bank statements to assess this loan, and to the "
+      + "lender keeping the result for the retention period."
+    : " I allow LedgerLens to read my bank statements to assess this loan, and the lender to keep the result for "
+      + "the retention period. I can ask for my application to be deleted."));
   consentBox.appendChild(consentLabel);
-  fields.appendChild(consentBox);
+  form.appendChild(consentBox);
 
-  const submit = el("button", "stamp", "Submit application");
-  submit.addEventListener("click", () => startApplication(submit));
-  fields.appendChild(submit);
-  fields.appendChild(el("p", "small muted notice-slot"));
-  form.appendChild(fields);
+  const next = el("button", "stamp", "Save and continue to bank statements");
+  const note = el("p", "small error-text notice-slot");
+  note.setAttribute("role", "alert");
+  next.addEventListener("click", async () => {
+    next.disabled = true;
+    note.textContent = "";
+    try {
+      const applicant = {};
+      ["full_name", "mobile", "email", "pan", "date_of_birth", "business_name", "constitution", "industry",
+       "business_start_year", "udyam_number", "gstin", "address_line", "city", "state", "pincode", "loan_purpose"]
+        .forEach((key) => {
+          const value = $(`a-${key}`).value.trim();
+          if (value !== "") applicant[key] = key === "business_start_year" ? Number(value) : value;
+        });
+      state.lang = $("f-lang").value;
+      const created = await api("/api/cases", { method: "POST", body: JSON.stringify({
+        applicant, requested_amount: Number($("f-amount").value), tenure_months: Number($("f-tenure").value),
+        language: state.lang, consent: check.checked,
+      }) });
+      state.caseId = created.case_id;
+      sections.forEach((box) => { box.disabled = true; });
+      check.disabled = true;
+      next.remove();
+      note.textContent = "";
+      if (created.warnings?.length) {
+        const warn = el("div", "notice");
+        warn.appendChild(el("b", null, "Please double-check: "));
+        warn.appendChild(document.createTextNode(created.warnings.join(" ")));
+        form.appendChild(warn);
+      }
+      renderStatements(form);
+    } catch (error) {
+      note.textContent = error.message;
+      next.disabled = false;
+    }
+  });
+  form.append(next, note);
 }
 
-async function startApplication(button) {
-  const note = document.querySelector(".notice-slot");
-  button.disabled = true;
-  note.textContent = "";
-  try {
-    state.lang = $("f-lang").value;
-    const created = await api("/api/cases", { method: "POST", body: JSON.stringify({
-      business_name: $("f-name").value.trim(),
-      requested_amount: Number($("f-amount").value),
-      tenure_months: Number($("f-tenure").value),
-      language: state.lang,
-      consent: $("f-consent").checked,
-    }) });
-    state.caseId = created.case_id;
-    const persona = state.config?.demo_mode ? $("f-sample").value : "";
-    if (persona) {
-      await api(`/api/cases/${state.caseId}/sample`, { method: "POST", body: JSON.stringify({ persona }) });
-    } else {
-      const chosen = Array.from($("f-files").files);
-      if (chosen.length === 0) throw new Error("Choose at least one PDF bank statement.");
-      for (const file of chosen.slice(0, 3)) {
-        const body = new FormData();
-        body.append("file", file);
-        note.textContent = `Uploading ${file.name}…`;
-        await api(`/api/cases/${state.caseId}/documents`, { method: "POST", body });
-      }
-      note.textContent = "";
-    }
-    await api(`/api/cases/${state.caseId}/submit`, { method: "POST" });
-    watchProgress();
-  } catch (error) {
-    note.textContent = error.message;
-    button.disabled = false;
+function renderStatements(form) {
+  const box = el("fieldset", "form-section");
+  box.appendChild(el("legend", null, "Bank statements"));
+  box.appendChild(el("p", "small muted", "Upload the last six months as PDFs downloaded from net banking or the "
+    + "bank's email - up to 3 files. Password-protected statements are fine: enter the PDF password when asked. "
+    + "Each statement is read the moment it arrives."));
+  const drop = el("label", "dropzone");
+  const input = control("input", "f-files", { type: "file", accept: "application/pdf,.pdf", multiple: true });
+  drop.append(input, el("span", null, "Drop PDF statements here, or click to choose"));
+  box.appendChild(drop);
+  const list = el("div", "uploads");
+  box.appendChild(list);
+
+  if (state.config?.demo_mode) {
+    const demo = el("div", "demo-hint");
+    demo.appendChild(el("p", "small", "Demo mode: attach a generated sample statement instead."));
+    const pick = options(control("select", "f-sample"), [["meena", "Steady UPI income"],
+      ["rapid", "Edited statement"], ["kiran", "Bounced instalments"]], "meena");
+    const add = el("button", "ghost", "Attach sample");
+    add.addEventListener("click", async () => {
+      try {
+        const res = await api(`/api/cases/${state.caseId}/sample`, { method: "POST", body: JSON.stringify({ persona: pick.value }) });
+        addUploadRow(list, { name: res.filename }, null, res, sync);
+      } catch (error) { demo.appendChild(el("p", "small error-text", error.message)); }
+    });
+    demo.append(pick, add);
+    box.appendChild(demo);
   }
+
+  const submit = el("button", "stamp", "Submit for assessment");
+  submit.disabled = true;
+  const note = el("p", "small error-text");
+  note.setAttribute("role", "alert");
+  const sync = () => { submit.disabled = list.querySelectorAll(".upload.ok").length === 0; };
+  const accept = (files) => Array.from(files).slice(0, 3).forEach((file) => addUploadRow(list, file, file, null, sync));
+  input.addEventListener("change", () => { accept(input.files); input.value = ""; });
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); accept(e.dataTransfer.files); });
+  submit.addEventListener("click", async () => {
+    submit.disabled = true;
+    try {
+      await api(`/api/cases/${state.caseId}/submit`, { method: "POST" });
+      watchProgress();
+    } catch (error) { note.textContent = error.message; submit.disabled = false; }
+  });
+  box.append(submit, note);
+  form.appendChild(box);
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function describePreview(p) {
+  const period = p.period_from ? `${fmtDate(p.period_from)} – ${fmtDate(p.period_to)}` : "period not printed";
+  const parts = [p.bank, p.account_holder, p.account_last4 ? `A/c XX${p.account_last4}` : null, period];
+  const line = parts.filter(Boolean).join(" · ");
+  return p.readable ? `${line} · ${p.transactions} transactions read` : `${line} · will be read by the AI model`;
+}
+function fmtDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function addUploadRow(list, meta, file, done, sync) {
+  const row = el("div", "upload pending");
+  const name = el("div", "upload-name", meta.name);
+  const status = el("div", "small muted", "Reading…");
+  const actions = el("div", "row");
+  row.append(name, status, actions);
+  list.appendChild(row);
+
+  const succeed = (result) => {
+    row.className = "upload ok";
+    status.textContent = result.preview ? describePreview(result.preview) : "Sample statement attached";
+    if (result.note) status.textContent += ` (${result.note})`;
+    clear(actions);
+    const remove = el("button", "ghost small-btn", "Remove");
+    remove.addEventListener("click", async () => {
+      try { await api(`/api/cases/${state.caseId}/documents/${result.doc_id}`, { method: "DELETE" }); row.remove(); sync(); }
+      catch (error) { status.textContent = error.message; }
+    });
+    actions.appendChild(remove);
+    sync();
+  };
+  const attempt = async (password) => {
+    row.className = "upload pending";
+    status.textContent = "Reading…";
+    const body = new FormData();
+    body.append("file", file);
+    if (password) body.append("password", password);
+    try {
+      succeed(await api(`/api/cases/${state.caseId}/documents`, { method: "POST", body }));
+    } catch (error) {
+      row.className = "upload failed";
+      status.textContent = error.message;
+      clear(actions);
+      if (/password/i.test(error.message)) {
+        const pw = control("input", `pw-${Math.random().toString(36).slice(2)}`, { type: "password",
+          placeholder: "PDF password", autocomplete: "off" });
+        const retry = el("button", "ghost small-btn", "Open");
+        retry.addEventListener("click", () => attempt(pw.value));
+        pw.addEventListener("keydown", (e) => { if (e.key === "Enter") attempt(pw.value); });
+        actions.append(pw, retry);
+        pw.focus();
+      } else {
+        const dismiss = el("button", "ghost small-btn", "Dismiss");
+        dismiss.addEventListener("click", () => row.remove());
+        actions.appendChild(dismiss);
+      }
+      sync();
+    }
+  };
+  if (done) succeed(done); else attempt(null);
 }
 
 const STEP_ORDER = ["read_documents", "screen_content", "categorise", "forensics", "cashflow", "risk_engine",
                     "memo_and_critic", "publish"];
 
+const OUTCOME_TEXT = {
+  APPROVE: "Approve", APPROVE_WITH_CONDITIONS: "Approve with conditions", REFER: "Refer to a credit officer",
+  REFER_INTEGRITY_REVIEW: "Verify documents before deciding", DECLINE: "Decline",
+};
+const REASON_TEXT = {
+  "RC-PAYMENT-RETURNS": "returned loan instalments", "RC-LOW-BALANCE-BUFFER": "thin balance buffer",
+  "RC-FREQUENT-LOW-BALANCE": "frequent low balances", "RC-VOLATILE-INCOME": "volatile income",
+  "RC-CASH-HEAVY-INCOME": "cash-heavy income", "RC-HIGH-EXISTING-DEBT": "high existing instalments",
+  "RC-SHORT-HISTORY": "short statement history", "RC-DECLINING-INCOME": "declining income",
+  "RC-DOCUMENT-VERIFICATION": "documents need verification", "RC-LOW-REPAYMENT-CAPACITY": "low repayment capacity",
+  "RC-MODEL-DISAGREEMENT": "risk models disagree",
+};
+const money = (v) => `₹${Number(v).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+
+/* The recommendation is final as soon as the risk engine finishes (seconds in); the memo that follows is
+   explanation. Staff see the result immediately rather than waiting for the prose. */
+function instantResult(detail) {
+  const card = el("div", `result-card ${detail.outcome?.startsWith("APPROVE") ? "go" : detail.outcome === "DECLINE" ? "stop" : "hold"}`);
+  card.appendChild(el("span", "eyebrow", "Instant recommendation"));
+  card.appendChild(el("h2", null, OUTCOME_TEXT[detail.outcome] || detail.outcome));
+  const figures = el("div", "figures");
+  [[detail.amount && money(detail.amount), "eligible amount"], [detail.emi && money(detail.emi), "monthly instalment"],
+   [detail.tenure && `${detail.tenure} months`, "tenure"],
+   [detail.rate && `${(Number(detail.rate) * 100).toFixed(1)}%`, "indicative rate"],
+   [detail.band && `Band ${detail.band}`, `${(Number(detail.pd) * 100).toFixed(1)}% default risk`]]
+    .forEach(([value, label]) => {
+      if (!value) return;
+      const f = el("div", "figure");
+      f.append(el("b", null, value), el("span", null, label));
+      figures.appendChild(f);
+    });
+  card.appendChild(figures);
+  const reasons = String(detail.reasons || "").split(",").filter(Boolean).map((r) => REASON_TEXT[r] || r);
+  if (reasons.length) card.appendChild(el("p", "small", `Main factors: ${reasons.join(", ")}.`));
+  if (Number(detail.integrity_findings)) {
+    card.appendChild(el("p", "small", `${detail.integrity_findings} document check(s) need attention - see the analysis.`));
+  }
+  card.appendChild(el("p", "small muted", "A credit officer confirms every sanction. The full evidence-linked "
+    + "analysis follows in a moment."));
+  return card;
+}
+
 function watchProgress() {
   show("progress");
-  $("progress-title").textContent = "Reading your statements";
-  $("progress-note").textContent = "This usually takes under a minute. You can watch each step as it finishes.";
+  const staffView = state.me.role !== "borrower";
+  $("progress-title").textContent = staffView ? "Assessing the application" : "Reading your statements";
+  $("progress-note").textContent = "The recommendation is usually ready within seconds; the written analysis "
+    + "follows. You can watch each step as it finishes.";
   clear($("progress-actions"));
   const ledger = $("ledger");
   clear(ledger);
@@ -344,14 +643,42 @@ function watchProgress() {
     row.children[0].textContent = event.status === "completed" ? "✓" : event.status === "failed" ? "!" : "·";
     row.children[1].textContent = event.label;
     row.children[2].textContent = event.duration_ms != null ? `${event.duration_ms} ms` : "";
+    if (event.step === "risk_engine" && event.status === "completed") {
+      const actions = $("progress-actions");
+      clear(actions);
+      actions.appendChild(staffView ? instantResult(event.detail)
+        : el("div", "notice ok", "Your statements have been analysed. A loan officer will now review the result."));
+    }
   });
-  source.addEventListener("done", (message) => {
-    source.close();
-    state.caseData = JSON.parse(message.data);
+  const token = viewToken;
+  const finish = (data) => {
+    if (token !== viewToken) return;
+    state.caseData = data;
     if (state.me.role === "borrower") waitForDecision();
-    else openCase(state.caseId);
-  });
-  source.addEventListener("timeout", () => source.close());
+    else if (state.me.role === "loan_officer") {
+      const open = el("button", "stamp", "Open the full analysis");
+      open.addEventListener("click", () => openCase(state.caseId));
+      $("progress-actions").appendChild(open);
+      if (state.caseData.failure_reason) $("progress-actions").appendChild(el("div", "notice error", state.caseData.failure_reason));
+    } else openCase(state.caseId);
+  };
+  source.addEventListener("done", (message) => { source.close(); finish(JSON.parse(message.data)); });
+  /* A slow model can outlast the stream, and networks drop connections: carry on by polling. */
+  let polling = false;
+  const poll = async () => {
+    if (polling) return;
+    polling = true;
+    source.close();
+    for (let delay = 3000; token === viewToken; delay = Math.min(delay * 1.3, 15000)) {
+      try {
+        const data = await api(`/api/cases/${state.caseId}`);
+        if (data.status !== "PROCESSING") { finish(data); return; }
+      } catch { /* keep trying */ }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  };
+  source.addEventListener("timeout", poll);
+  source.onerror = () => { if (source.readyState === EventSource.CLOSED || source.readyState === EventSource.CONNECTING) poll(); };
 }
 
 /* A person decides every case, which can take a while. The borrower is told so plainly, can leave and
@@ -421,27 +748,52 @@ async function demoSwitch(email) {
 
 const BORROWER_STATUS = {
   DRAFT: "Not submitted", PROCESSING: "Reading your statements", READY_FOR_REVIEW: "With a loan officer",
-  PENDING_SECOND_APPROVAL: "With a loan officer", NEEDS_MANUAL_PROCESSING: "With a loan officer",
+  PENDING_SECOND_APPROVAL: "With a loan officer", NEEDS_MANUAL_PROCESSING: "With a loan officer for manual review",
 };
 
 async function loadMine() {
   const { cases } = await api("/api/my/cases");
-  if (cases.length === 0) { renderApply(); return; }
+  const officer = state.me.role === "loan_officer";
+  if (cases.length === 0 && !officer) { renderApply(); return; }
   show("mine");
+  $("mine-title").textContent = officer ? "Applications you sourced" : "Your applications";
+  $("mine-new").textContent = officer ? "New customer application" : "New application";
   $("mine-new").onclick = renderApply;
+  const head = $("mine-head");
+  clear(head);
+  const cols = officer ? ["Customer business", "Requested", "Submitted", "Recommendation", "Checks", "Status"]
+    : ["Business", "Requested", "Submitted", "Status"];
+  const tr = el("tr");
+  cols.forEach((c) => tr.appendChild(el("th", null, c)));
+  head.appendChild(tr);
   const body = $("mine-body");
   clear(body);
+  if (cases.length === 0) {
+    const empty = el("tr");
+    const td = el("td", "muted", "No applications yet. Start one with the button above.");
+    td.colSpan = cols.length;
+    empty.appendChild(td);
+    body.appendChild(empty);
+  }
   cases.forEach((c) => {
-    const tr = el("tr");
-    tr.tabIndex = 0;
-    tr.append(el("td", null, c.business_name),
-              el("td", null, `₹${Number(c.requested_amount).toLocaleString("en-IN")}`),
-              el("td", null, new Date(c.created_at).toLocaleDateString()),
-              el("td", null, c.decided ? "Decision ready" : BORROWER_STATUS[c.status] || "With a loan officer"));
-    const open = () => openMine(c);
-    tr.addEventListener("click", open);
-    tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
-    body.appendChild(tr);
+    const row = el("tr");
+    row.tabIndex = 0;
+    const status = c.decided ? "Decision recorded" : BORROWER_STATUS[c.status] || "With a credit officer";
+    row.append(el("td", null, c.business_name), el("td", null, money(c.requested_amount)),
+               el("td", null, new Date(c.created_at).toLocaleDateString("en-IN")));
+    if (officer) {
+      const rec = el("td");
+      if (c.band) rec.appendChild(el("span", `band ${c.band.toLowerCase()}`, c.band));
+      rec.appendChild(document.createTextNode(` ${OUTCOME_TEXT[c.recommendation] || "—"}`));
+      const checks = el("td");
+      if (c.integrity_findings) checks.appendChild(el("span", "pill high", `${c.integrity_findings} to verify`));
+      row.append(rec, checks);
+    }
+    row.appendChild(el("td", null, status));
+    const open = () => (officer ? (c.status === "DRAFT" ? null : openCase(c.case_id)) : openMine(c));
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+    body.appendChild(row);
   });
 }
 
@@ -557,7 +909,9 @@ async function openCase(caseId) {
   state.pages.clear();
   state.docId = state.caseData.documents[0]?.doc_id || null;
   show("case");
-  $("back-to-queue").onclick = loadQueue;
+  const officer = state.me.role === "loan_officer";
+  $("back-to-queue").textContent = officer ? "Back to my applications" : "Back to queue";
+  $("back-to-queue").onclick = officer ? loadMine : loadQueue;
   renderCaseHead();
   renderTabs();
   renderDecision();
@@ -573,7 +927,10 @@ function renderCaseHead() {
   const left = el("div");
   left.appendChild(el("span", null, `₹${data.requested_amount} requested over ${data.tenure_months} months`));
   left.appendChild(document.createElement("br"));
-  left.appendChild(el("span", "small muted", `${data.transaction_count} transactions · ${data.documents.length} document(s) · ${data.ai_mode} mode`));
+  const readers = [...new Set(data.documents.map((d) => ({ template: "standard reader", universal: "bank-layout reader",
+    ollama: "local AI model", gemini: "Gemini" }[d.parser] || d.parser)))].join(", ");
+  left.appendChild(el("span", "small muted", `${data.transaction_count} transactions · ${data.documents.length} statement(s)`
+    + ` · read by ${readers}` + (data.documents.some((d) => d.decrypted) ? " · password-protected original" : "")));
   line.appendChild(left);
   if (data.score) {
     const right = el("div", "row");
@@ -582,6 +939,18 @@ function renderCaseHead() {
     line.appendChild(right);
   }
   head.appendChild(line);
+  const a = data.applicant;
+  if (a) {
+    const kyc = el("div", "kyc small");
+    const pan = a.pan ? `PAN ${a.pan}` : null;
+    kyc.textContent = [a.full_name, pan, `+91 ${a.mobile}`, a.constitution?.replaceAll("_", " "), a.industry,
+      a.business_start_year ? `since ${a.business_start_year}` : null, a.gstin ? `GSTIN ${a.gstin}` : null,
+      a.udyam_number, `${a.city}, ${a.state}`, data.channel === "assisted" ? "sourced by a loan officer" : "applied online"]
+      .filter(Boolean).join(" · ");
+    head.appendChild(kyc);
+    head.appendChild(el("p", "small muted", "Identity numbers are format-checked only; verify them through your PAN/GST/Udyam checks."));
+  }
+  (data.applicant_warnings || []).forEach((w) => head.appendChild(el("div", "notice", w)));
   if (data.failure_reason) {
     head.appendChild(el("div", "notice error", data.failure_reason));
   }
@@ -610,7 +979,9 @@ const TABS = [["memo", "Memo"], ["integrity", "Integrity"], ["cashflow", "Cash f
 function renderTabs() {
   const tabs = $("case-tabs");
   clear(tabs);
-  TABS.forEach(([key, label]) => {
+  const visible = TABS.filter(([key]) => !(key === "copilot" && state.me.role === "loan_officer"));
+  if (!visible.some(([key]) => key === state.tab)) state.tab = visible[0][0];
+  visible.forEach(([key, label]) => {
     const button = el("button", null, label);
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", String(state.tab === key));
@@ -919,6 +1290,14 @@ function renderDecision() {
   const panel = $("decision-panel");
   clear(panel);
   const data = state.caseData;
+  if (state.me.role === "loan_officer") {
+    const text = data.decision ? `Decision recorded: ${OUTCOME_TEXT[data.decision.final_outcome] || data.decision.final_outcome}`
+      + (data.decision.approved_amount ? ` · ${money(data.decision.approved_amount)}` : "")
+      : data.status === "PENDING_SECOND_APPROVAL" ? "Awaiting a second credit officer's countersignature."
+      : "With a credit officer for sanction. You'll see the decision here.";
+    panel.appendChild(el("div", data.decision ? "notice ok" : "notice", text));
+    return;
+  }
   if (state.me.role !== "underwriter") return;
   if (data.decision) {
     const done = el("div", "notice ok");

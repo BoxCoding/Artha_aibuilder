@@ -1,4 +1,4 @@
-# Model card — ARTHA credit assessment
+# Model card — LedgerLens credit assessment
 
 ## Purpose
 

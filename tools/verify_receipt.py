@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify an ARTHA decision receipt, independently of ARTHA.
+"""Verify an LedgerLens decision receipt, independently of LedgerLens.
 
 This file imports nothing from the application on purpose. Anyone holding a receipt and the
 issuer's public key can check it offline, on any machine, without an account, an API call, or
@@ -19,7 +19,7 @@ import hashlib
 import json
 import sys
 
-RECEIPT_VERSION = "artha-receipt.v1"
+RECEIPT_VERSION = "ledgerlens-receipt.v1"
 
 
 def canonical_bytes(payload: dict) -> bytes:

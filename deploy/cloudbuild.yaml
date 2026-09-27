@@ -28,12 +28,12 @@ steps:
     args:
       - -c
       - |
-        gcloud run jobs deploy artha-migrate --image=${_IMAGE}:$SHORT_SHA --region=${_REGION} \
-          --service-account=artha-run@$PROJECT_ID.iam.gserviceaccount.com \
+        gcloud run jobs deploy ledgerlens-migrate --image=${_IMAGE}:$SHORT_SHA --region=${_REGION} \
+          --service-account=ledgerlens-run@$PROJECT_ID.iam.gserviceaccount.com \
           --set-cloudsql-instances=${_SQL_INSTANCE} \
-          --set-secrets=DATABASE_URL=artha-database-url:latest \
+          --set-secrets=DATABASE_URL=ledgerlens-database-url:latest \
           --command=alembic --args=upgrade,head --max-retries=0 --task-timeout=600 \
-        && gcloud run jobs execute artha-migrate --region=${_REGION} --wait
+        && gcloud run jobs execute ledgerlens-migrate --region=${_REGION} --wait
 
   - id: deploy-api
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
@@ -41,10 +41,10 @@ steps:
     args:
       - run
       - deploy
-      - artha
+      - ledgerlens
       - --image=${_IMAGE}:$SHORT_SHA
       - --region=${_REGION}
-      - --service-account=artha-run@$PROJECT_ID.iam.gserviceaccount.com
+      - --service-account=ledgerlens-run@$PROJECT_ID.iam.gserviceaccount.com
       - --no-allow-unauthenticated
       - --add-cloudsql-instances=${_SQL_INSTANCE}
       - --min-instances=1
@@ -54,7 +54,7 @@ steps:
       - --memory=2Gi
       - --timeout=300
       - --set-env-vars=APP_ENV=prod,DEMO_MODE=false,PIPELINE_MODE=queue,LLM_MODE=vertex,TRUST_PROXY_HEADERS=true,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,WEB_CONCURRENCY=2
-      - --set-secrets=SECRET_KEY=artha-session-key:latest,RECEIPT_SIGNING_SEED=artha-receipt-seed:latest,DATABASE_URL=artha-database-url:latest
+      - --set-secrets=SECRET_KEY=ledgerlens-session-key:latest,RECEIPT_SIGNING_SEED=ledgerlens-receipt-seed:latest,DATABASE_URL=ledgerlens-database-url:latest
 
   # The worker never takes user traffic: internal ingress, CPU always allocated so it can poll.
   - id: deploy-worker
@@ -63,10 +63,10 @@ steps:
     args:
       - run
       - deploy
-      - artha-worker
+      - ledgerlens-worker
       - --image=${_IMAGE}:$SHORT_SHA
       - --region=${_REGION}
-      - --service-account=artha-run@$PROJECT_ID.iam.gserviceaccount.com
+      - --service-account=ledgerlens-run@$PROJECT_ID.iam.gserviceaccount.com
       - --no-allow-unauthenticated
       - --ingress=internal
       - --no-cpu-throttling
@@ -78,12 +78,12 @@ steps:
       - --command=python
       - --args=-m,app.worker
       - --set-env-vars=APP_ENV=prod,DEMO_MODE=false,PIPELINE_MODE=queue,LLM_MODE=vertex,PIPELINE_CONCURRENCY=2,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global
-      - --set-secrets=SECRET_KEY=artha-session-key:latest,RECEIPT_SIGNING_SEED=artha-receipt-seed:latest,DATABASE_URL=artha-database-url:latest
+      - --set-secrets=SECRET_KEY=ledgerlens-session-key:latest,RECEIPT_SIGNING_SEED=ledgerlens-receipt-seed:latest,DATABASE_URL=ledgerlens-database-url:latest
 
 substitutions:
   _REGION: asia-south1
-  _IMAGE: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/artha/api
-  _SQL_INSTANCE: ${PROJECT_ID}:${_REGION}:artha-db
+  _IMAGE: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/ledgerlens/api
+  _SQL_INSTANCE: ${PROJECT_ID}:${_REGION}:ledgerlens-db
 
 options:
   logging: CLOUD_LOGGING_ONLY
