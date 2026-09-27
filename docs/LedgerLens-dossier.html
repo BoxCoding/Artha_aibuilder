@@ -195,6 +195,15 @@ svg.arch #arrow path { fill: var(--ink-soft); }
 svg.arch g { transition: opacity .3s ease; }
 svg.arch.ai-only g.det { opacity: .18; }
 
+/* ------------------------------------------------------------ coverage */
+.cov { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.2rem; }
+.cov-col { background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 10px; padding: 1rem 1.2rem .6rem; box-shadow: var(--shadow); }
+.cov-col h3 { font-family: var(--mono); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: .6rem; }
+.cov-row { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr); gap: .6rem; padding: .55rem 0; border-top: 1px dashed var(--rule); }
+.cov-row .tick { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: var(--ok-wash); color: var(--ok); font-weight: 700; font-size: .8rem; }
+.cov-row b { font-family: var(--display); font-size: 1rem; }
+.cov-row p { font-size: .88rem; color: var(--ink-soft); margin-top: .1rem; }
+
 /* ------------------------------------------------------------ tables */
 table { width: 100%; border-collapse: collapse; font-size: .92rem; min-width: 560px; }
 th { text-align: left; font-family: var(--mono); font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
@@ -286,7 +295,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       LedgerLens
     </span>
     <nav aria-label="Sections">
-      <a href="#journey">Journey</a><a href="#architecture">Architecture</a><a href="#reader">Reader</a><a href="#forensics">Forensics</a>
+      <a href="#coverage">Coverage</a><a href="#journey">Journey</a><a href="#architecture">Architecture</a><a href="#reader">Reader</a><a href="#forensics">Forensics</a>
       <a href="#trust">Trust</a><a href="#tour">Product</a><a href="#numbers">Numbers</a><a href="#deploy">Deploy</a>
     </nav>
   </header>
@@ -303,7 +312,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
         came from. A person makes every lending decision.</p>
       <div class="facts">
         <div class="fact"><b>1.8 s</b><span>from submit to instant recommendation</span></div>
-        <div class="fact"><b>9 + 1</b><span>forensic rules plus an identity check</span></div>
+        <div class="fact"><b>17</b><span>fraud, anomaly and AML checks per case</span></div>
         <div class="fact"><b>0</b><span>customer bytes sent off-premise with the local model</span></div>
       </div>
     </div>
@@ -319,6 +328,43 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       <svg class="lens" viewBox="0 0 132 132" aria-hidden="true"><circle class="glass" cx="52" cy="52" r="42"/><path d="M84 84 124 124"/></svg>
       <div class="stamp">FR-BAL-001 · balance breaks<br>FR-FONT-001 · font differs</div>
     </figure>
+  </section>
+
+  <!-- COVERAGE -->
+  <section class="block" id="coverage" aria-labelledby="t-coverage">
+    <div class="sec-head">
+      <span class="folio">Folio 00</span>
+      <div>
+        <h2 id="t-coverage">Every line of the brief, and where it lives</h2>
+        <p>The challenge asked for AI that detects fraud and risk, automates complex processes, improves customer
+          interactions and personalises financial experiences, on Google Cloud. Each suggested direction and technology
+          maps to working code. Google Cloud adapters are tested against mocked Google APIs; each has a local equivalent,
+          so the same system runs on-premise with a local Gemma model.</p>
+      </div>
+    </div>
+    <div class="cov">
+      <div class="cov-col">
+        <h3>Solution directions</h3>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Fraud detection</b><p>Nine rules on the file itself: balance breaks, font changes, editing traces, prompt injection, date and reference anomalies.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Transaction anomaly analysis</b><p>Outliers, circular transfers and window dressing inside a statement; the same statement, account or phone under different applicants, and application velocity, across the portfolio.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Document intelligence</b><p>Readers for real Indian bank layouts that reconcile every balance, password-protected PDFs, Document AI for scans.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Financial assistance</b><p>A customer coach in English, Hindi and Indonesian with a lending glossary; a credit co-pilot with read-only case tools.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Personalised recommendations</b><p>An EMI date matched to the customer's cash-flow peak, structures the policy would approve, and concrete targets to reach a better band.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Compliance automation</b><p>RBI-style Key Fact Statement with APR and an acceptance gate, AML watchlist and reportable-cash screening, a checklist that blocks non-compliant approvals, an auditor report.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Risk assessment</b><p>Transparent scorecard and YAML policy, challenged by a learned model; an instant recommendation in about two seconds.</p></div></div>
+      </div>
+      <div class="cov-col">
+        <h3>Google Cloud technologies</h3>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Gemini on Vertex AI</b><p>Memo drafting and critique, customer explanations, the co-pilot agent, scan extraction.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>BigQuery</b><p>Portfolio analytics over the event stream, with views for fraud trend and override rate.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Vertex AI predictive</b><p>The gradient-boosted challenger served from a Vertex AI endpoint, with the local artifact as fallback.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Document AI</b><p>Scanned and photographed statements, mapped into the same reconciled reading.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Vertex AI Search</b><p>Policy and procedure retrieval for staff and the co-pilot; customers only ever search the glossary.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Cloud Run</b><p>The API and the pipeline worker as services, schema migrations as a job.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Cloud SQL</b><p>PostgreSQL for cases, documents, the audit chain, jobs, accounts and the event outbox.</p></div></div>
+        <div class="cov-row"><span class="tick">✓</span><div><b>Pub/Sub</b><p>Domain events from a transactional outbox; a BigQuery subscription lands them for analytics.</p></div></div>
+      </div>
+    </div>
   </section>
 
   <!-- PRINCIPLE -->
@@ -379,7 +425,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       <span class="own det">deterministic</span><span class="own ai">model-assisted</span>
     </div>
     <div class="arch-wrap scroll">
-      <svg class="arch" id="arch" viewBox="0 0 1120 650" role="img" aria-labelledby="arch-title arch-desc">
+      <svg class="arch" id="arch" viewBox="0 0 1120 800" role="img" aria-labelledby="arch-title arch-desc">
         <title id="arch-title">LedgerLens architecture</title>
         <desc id="arch-desc">Four roles use a browser app that calls a stateless FastAPI service. The API writes to PostgreSQL and signs receipts. A pipeline worker claims jobs from PostgreSQL and calls models through an LLM gateway: a local Ollama Gemma model by default, or Gemini on Vertex AI.</desc>
         <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z"/></marker></defs>
@@ -457,6 +503,28 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
           <text class="sub" x="388" y="598">optional cloud provider</text>
           <text class="sub" x="388" y="615">service-account auth, no API keys</text>
         </g>
+
+        <g class="det">
+          <rect class="band" x="30" y="660" width="1060" height="126" rx="12"/>
+          <text class="sub" x="48" y="682">GOOGLE CLOUD DATA &amp; AI SERVICES · each optional, each with a local equivalent</text>
+          <rect class="chip" x="48" y="696" width="200" height="72" rx="10"/>
+          <text class="title" x="148" y="724" text-anchor="middle">Pub/Sub → BigQuery</text>
+          <text class="sub" x="148" y="744" text-anchor="middle">event outbox · analytics</text>
+          <rect class="chip ai" x="258" y="696" width="200" height="72" rx="10"/>
+          <text class="title" x="358" y="724" text-anchor="middle">Document AI</text>
+          <text class="sub" x="358" y="744" text-anchor="middle">scanned statements</text>
+          <rect class="chip ai" x="468" y="696" width="200" height="72" rx="10"/>
+          <text class="title" x="568" y="724" text-anchor="middle">Vertex AI Search</text>
+          <text class="sub" x="568" y="744" text-anchor="middle">policy retrieval</text>
+          <rect class="chip" x="678" y="696" width="200" height="72" rx="10"/>
+          <text class="title" x="778" y="724" text-anchor="middle">Vertex AI endpoint</text>
+          <text class="sub" x="778" y="744" text-anchor="middle">challenger model serving</text>
+          <rect class="chip" x="888" y="696" width="186" height="72" rx="10"/>
+          <text class="title" x="981" y="724" text-anchor="middle">Cloud Run · Cloud SQL</text>
+          <text class="sub" x="981" y="744" text-anchor="middle">hosting · state</text>
+          <path class="edge" d="M1080 470 C1105 520 1105 640 1080 692"/>
+          <text class="el" x="1030" y="652" text-anchor="end">events · OCR · retrieval · serving</text>
+        </g>
       </svg>
     </div>
   </section>
@@ -533,7 +601,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
     <div class="sec-head">
       <span class="folio">Folio 06</span>
       <div>
-        <h2 id="t-forensics">Nine rules and an identity check</h2>
+        <h2 id="t-forensics">Seventeen checks, three scopes</h2>
         <p>They interrogate the file as an artefact rather than reading it as a document. Each emits evidence IDs that resolve to
           a box on a page. A serious finding sends the case to integrity review; nothing here ever declines anyone, and the
           customer never hears the word fraud.</p>
@@ -550,6 +618,19 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       <div class="rule"><span class="sev med">MEDIUM</span><code>FR-TXN-002</code><p>Round-figure cash deposits in the final 15 days before applying.</p></div>
       <div class="rule"><span class="sev med">MEDIUM</span><code>FR-TXN-003</code><p>Money received from and returned to one counterparty within days.</p></div>
       <div class="rule"><span class="sev med">MEDIUM</span><code>ID-NAME-001</code><p>Statement belongs to someone other than the applicant or their business. Triggers verification, not decline.</p></div>
+    </div>
+    <h3 style="margin:1.6rem 0 .8rem">Across the portfolio</h3>
+    <div class="rules">
+      <div class="rule"><span class="sev high">HIGH</span><code>FR-XAPP-001</code><p>The identical statement file was submitted by a different applicant. Compared as keyed hashes, never raw identifiers.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-XAPP-002</code><p>The same bank account appears in an application from a different PAN.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-XAPP-003</code><p>The same mobile number is given under a different PAN.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-VEL-001</code><p>Three or more other applications by the same PAN in 30 days: loan stacking or repeated attempts.</p></div>
+    </div>
+    <h3 style="margin:1.6rem 0 .8rem">Anti-money laundering</h3>
+    <div class="rules">
+      <div class="rule"><span class="sev high">HIGH</span><code>AML-SAN-001</code><p>The applicant or business name matches a sanctions or internal watchlist. Approval is blocked until compliance clears it.</p></div>
+      <div class="rule"><span class="sev high">HIGH</span><code>AML-SAN-002</code><p>A counterparty named in the statement narrations matches the watchlist.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>AML-CTR-001</code><p>Cash deposits of ₹10 lakh or more in a month: a reporting duty for the lender, not a finding against the applicant.</p></div>
     </div>
   </section>
 
@@ -580,6 +661,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       <div class="card"><h3>Documents</h3><p>Magic-byte, active-content and page checks, repeated after decryption. Pages render server-side, so the browser never parses an untrusted PDF.</p></div>
       <div class="card"><h3>Models</h3><p>Figure whitelist, citation resolution, a deterministic critic, a groundedness gate and a quality gate. Removed claims are counted on screen, never hidden.</p></div>
       <div class="card"><h3>Web</h3><p>Strict CSP with no inline script, Origin checks on writes, SameSite=strict cookies, HSTS in production, a request ID instead of a stack trace.</p></div>
+      <div class="card"><h3>Compliance</h3><p>A Key Fact Statement with APR on every approval and a customer acceptance gate before disbursal, a live checklist per case, and a one-click auditor report with the case's hash-chained trail.</p></div>
       <div class="card"><h3>Operations</h3><p>Production refuses to start with a weak secret, demo mode, no database, an ephemeral receipt key or an in-process pipeline.</p></div>
     </div>
   </section>
@@ -630,6 +712,32 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
         </div>
         <figcaption>English, Hindi and Indonesian, assembled from approved text so no model can invent a reason.</figcaption>
       </figure>
+      <figure class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>customer · key fact statement</span></div>
+        <div class="body">
+          <span class="eyebrow">Key Fact Statement</span>
+          <h3 style="font-size:1.1rem;margin:.3rem 0">APR 22.25% · you receive ₹2,27,286</h3>
+          <div class="mini-kpis">
+            <div><b>₹2,30,000</b><span>sanctioned</span></div>
+            <div><b>24 × ₹11,819</b><span>monthly instalments</span></div>
+            <div><b>₹2,300 + ₹414</b><span>processing fee + GST</span></div>
+            <div><b>3 days</b><span>cooling-off period</span></div>
+          </div>
+        </div>
+        <figcaption>Generated on approval; the money is sent only after the customer accepts it.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>customer · personalised plan</span></div>
+        <div class="body">
+          <span class="eyebrow">Your personalised plan</span>
+          <ul class="tl">
+            <li><i>→</i><span>EMI on the 20th: 62% of receipts have usually arrived by then</span><span></span></li>
+            <li><i>→</i><span>Keep an average balance above ₹1,47,101 (today ₹1,29,655)</span><span></span></li>
+            <li><i>→</i><span>Take more by UPI: cash under 5% of receipts (today 9%)</span><span></span></li>
+          </ul>
+        </div>
+        <figcaption>Computed from the customer's own statement; shown in their language.</figcaption>
+      </figure>
     </div>
   </section>
 
@@ -644,7 +752,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       </div>
     </div>
     <div class="numbers">
-      <div><b>133</b><span>automated tests</span><em>pass on SQLite and PostgreSQL</em></div>
+      <div><b>147</b><span>automated tests</span><em>pass on SQLite and PostgreSQL</em></div>
       <div><b>70/70</b><span>rows read exactly, per layout</span><em>4 bank-style layouts</em></div>
       <div><b>1.00</b><span>tampering recall</span><em>gate ≥ 0.90</em></div>
       <div><b>0.00</b><span>false positives on clean files</span><em>gate ≤ 0.05</em></div>
@@ -681,12 +789,13 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
           <li><span>Migration as a Cloud Run job against Cloud SQL</span></li>
           <li><span>API on Cloud Run with secrets from Secret Manager</span></li>
           <li><span>Worker on Cloud Run, internal ingress, CPU always on</span></li>
+          <li><span>Pub/Sub topic with a BigQuery subscription; Document AI, Vertex AI Search and a Vertex endpoint wired by setting</span></li>
         </ol>
       </div>
     </div>
     <div class="stack" aria-label="Technology">
       <span>Python 3.12</span><span>FastAPI</span><span>SQLAlchemy 2 Core</span><span>PostgreSQL</span><span>Alembic</span><span>Google ADK Workflow</span>
-      <span>Ollama · Gemma</span><span>Gemini · Vertex AI</span><span>pdfplumber · pypdf · PDFium</span><span>scikit-learn</span><span>Argon2id</span>
+      <span>Ollama · Gemma</span><span>Gemini · Vertex AI</span><span>Pub/Sub</span><span>BigQuery</span><span>Document AI</span><span>Vertex AI Search</span><span>pdfplumber · pypdf · PDFium</span><span>scikit-learn</span><span>Argon2id</span>
       <span>Ed25519</span><span>Vanilla JS · strict CSP</span><span>Docker · Cloud Run</span>
     </div>
   </section>
@@ -701,6 +810,7 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       </div>
     </div>
     <ul class="limits">
+      <li><b>Live Google Cloud.</b> Every Google Cloud adapter is tested against mocked Google APIs. Run them once against a real project before relying on them.</li>
       <li><b>Real statements.</b> The universal reader is tested on layouts that imitate four banks. Run it over consented real statements from every bank you lend against.</li>
       <li><b>Identity.</b> PAN, GSTIN and Udyam are format- and checksum-validated only. Connect NSDL, GSTN and Udyam verification, e-KYC/CKYC and an Account Aggregator fetch, which removes the tampering question at source.</li>
       <li><b>Model size.</b> gemma3:1b drafts usually fail the memo quality gate, so the deterministic memo is used. Use gemma3:4b or larger, and a vision model for scans.</li>
@@ -738,10 +848,11 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
       what: "Rules categorise most rows into 18 classes. The model is asked only when rules leave at least 20% uncategorised, with a six-second budget, because categories feed the score.",
       points: ["142 of 160 rows categorised by rules in this run", "Model skipped: rules were sufficient", "Low-confidence model labels are ignored"],
       inp: "Transactions", out: "Categories such as UPI business credit, cash deposit, EMI" },
-    { n: "05a", name: "Forensic checks", own: "det", t: "8 ms", fork: true,
-      what: "Nine rules and an identity check interrogate the file. With a vision model configured, suspicious cells are cropped and inspected too, but vision can only corroborate.",
-      points: ["Balance breaks, font changes, editing traces, date anomalies, duplicate references", "Statistical outliers catch forgers who repaired every balance", "Statement in another person's name triggers verification"],
-      inp: "Transactions, fonts, metadata, applicant", out: "Findings with evidence IDs" },
+    { n: "05a", name: "Fraud, anomaly and AML checks", own: "det", t: "8 ms", fork: true,
+      what: "Nine rules and an identity check interrogate the file. Cross-application checks compare it with every earlier application, and AML screening checks names and cash against the watchlist and reporting threshold.",
+      points: ["Balance breaks, font changes, editing traces, date anomalies, duplicate references", "The same statement, account or phone under a different applicant; application velocity",
+               "Watchlist matches refer the case to compliance; reportable cash is flagged for the lender's reporting duty"],
+      inp: "Transactions, fonts, metadata, applicant, earlier applications", out: "Findings with evidence IDs" },
     { n: "05b", name: "Cash-flow analysis", own: "det", t: "6 ms", fork: true,
       what: "Fifteen features describe the business: inflow level and trend, volatility, balance buffer, cash share, existing instalments and more.",
       points: ["Monthly aggregates for the underwriter's chart", "Computed evidence records for every figure the memo may quote"],
@@ -749,7 +860,8 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
     { n: "06", name: "Score and apply policy", own: "det", t: "1.2 s", fork: false,
       what: "The transparent scorecard sets the probability of default and band. A monotonic gradient-boosted model challenges it. Versioned YAML policy sets outcome, amount and rate.",
       points: ["This is the instant recommendation: published to the officer here, about 1.8 s after submit",
-               "Models two bands apart send the case to a person", "Serious integrity findings refer, never decline"],
+               "Models two bands apart send the case to a person", "Serious integrity findings refer, never decline",
+               "A case.scored event goes to Pub/Sub, and on to BigQuery for portfolio analytics"],
       inp: "Features and findings", out: "Outcome, amount, EMI, rate, band, reasons" },
     { n: "07", name: "Look for a structure that works", own: "det", t: "2 ms", fork: false,
       what: "For anything short of an approval, a search over amount and tenure replays each candidate through the unmodified policy engine.",
@@ -761,11 +873,12 @@ footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink)
                "In this run the 1B model's draft failed the quality gate, so the deterministic memo was used, with a note saying why"],
       inp: "Evidence bundle", out: "Cited credit memo" },
     { n: "09", name: "Credit officer decides", own: "human", t: "a person", fork: false,
-      what: "The case appears in the credit queue with the evidence viewer beside the memo. Clicking a citation marks the exact cell on the rendered page.",
-      points: ["A reason is required to depart from the recommendation", "Approvals above ₹5,00,000 need a second credit officer", "A loan officer can see the result but cannot sanction"],
+      what: "The case appears in the credit queue with the evidence viewer beside the memo and a compliance checklist. Clicking a citation marks the exact cell on the rendered page.",
+      points: ["A reason is required to depart from the recommendation", "Approvals above ₹5,00,000 need a second credit officer",
+               "An uncleared watchlist match blocks approval until compliance clears it", "Approval generates the Key Fact Statement with APR"],
       inp: "Analysis", out: "Recorded decision in the audit chain" },
-    { n: "10", name: "Explain and issue a receipt", own: "ai", t: "instant", fork: false,
-      what: "The customer is told the outcome in their language from approved text. They can download a receipt signed with Ed25519 that anyone can verify offline.",
+    { n: "10", name: "Explain, advise, accept, receipt", own: "ai", t: "instant", fork: false,
+      what: "The customer is told the outcome in their language, gets a personalised plan (EMI date, workable structures, targets), accepts the Key Fact Statement before disbursal, and can download a receipt signed with Ed25519.",
       points: ["If a model adds a figure or leaks an internal term, the template version is shown", "The receipt holds document digests, never transactions or account numbers",
                "It records the model versions in force and whether a person overrode the recommendation"],
       inp: "Decision", out: "Explanation and portable signed receipt" }
