@@ -76,6 +76,12 @@ class CallbackRequest(BaseModel):
     note: str = Field(default="", max_length=300)
 
 
+def _checklist(case: Case) -> list[dict[str, Any]]:
+    from app.compliance.checklist import evaluate
+
+    return evaluate(case)
+
+
 def _progress(case: Case) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
     for e in case.events:
@@ -93,6 +99,8 @@ def borrower_view(case: Case, explanation: Explanation | None) -> dict[str, Any]
         "failure_reason": case.failure_reason, "decided": decision is not None,
         "applicant": case.applicant.model_dump(mode="json") if case.applicant else None,
         "documents": [{"doc_id": d.doc_id, "filename": d.filename} for d in case.documents],
+        "kfs": case.kfs, "kfs_accepted_at": case.kfs_accepted_at,
+        "recommendations": case.recommendations if decision else {},
     }
     if decision and explanation:
         amount = decision.approved_amount
@@ -118,6 +126,8 @@ def staff_view(case: Case) -> dict[str, Any]:
         "channel": case.channel, "sourced_by": case.sourced_by,
         "applicant": case.applicant.model_dump(mode="json") if case.applicant else None,
         "applicant_warnings": case.applicant.warnings() if case.applicant else [],
+        "compliance": _checklist(case), "kfs": case.kfs, "kfs_accepted_at": case.kfs_accepted_at,
+        "compliance_clearances": case.compliance_clearances, "recommendations": case.recommendations,
         "documents": [{"doc_id": d.doc_id, "filename": d.filename, "pages": d.page_count, "parser": d.parser,
                        "sha256": d.sha256[:16], "bank": d.header.bank_name, "holder": d.header.account_holder,
                        "account_last4": d.header.account_last4, "period_from": d.header.period_from,

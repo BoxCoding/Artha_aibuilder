@@ -1,0 +1,40 @@
+# Customer-safe explanations of lending terms. Staff see these too.
+APR:
+  title: "Annual Percentage Rate (APR)"
+  text: "The APR is the yearly cost of your loan including the interest rate and all fees, such as the processing fee and GST on it. It is always shown in your Key Fact Statement and is the fairest number to compare loans with."
+KFS:
+  title: "Key Fact Statement (KFS)"
+  text: "A one-page summary you receive before signing: the amount, tenure, instalment, every charge, the APR, the cooling-off period and how to raise a complaint. You must accept it before the money is sent."
+EMI:
+  title: "Instalment (EMI)"
+  text: "Your equated monthly instalment: the same amount paid every month, covering interest and part of the loan. Choose an EMI date just after your business usually receives money."
+NACH:
+  title: "NACH mandate"
+  text: "An instruction that lets the lender collect your EMI automatically from your bank account on the due date. A returned (bounced) NACH payment hurts future loan applications."
+COOLING_OFF:
+  title: "Cooling-off (look-up) period"
+  text: "A short period after the loan is paid out during which you can exit by returning the principal and the proportionate APR, with no penalty. The number of days is written in your Key Fact Statement."
+PREPAYMENT:
+  title: "Prepayment"
+  text: "Paying back the loan earlier than planned. This loan allows prepayment at any time without a foreclosure charge."
+PENAL:
+  title: "Penal charges"
+  text: "A charge applied only to an instalment that is overdue. It is not added to the interest rate and is not compounded."
+GRIEVANCE:
+  title: "Complaints and grievance redressal"
+  text: "If you are unhappy with any part of your loan, write to the grievance officer named in your Key Fact Statement. If you do not get a reply within 30 days you may approach the RBI Ombudsman."
+UDYAM:
+  title: "Udyam registration"
+  text: "The government's free registration for micro, small and medium enterprises. The number looks like UDYAM-MH-12-0012345 and can help you access MSME schemes."
+GSTIN:
+  title: "GSTIN"
+  text: "Your 15-character Goods and Services Tax number. It contains your PAN, so it should match the PAN you give us."
+AA:
+  title: "Account Aggregator"
+  text: "An RBI-regulated way to share your bank statements directly from your bank with your consent, instead of uploading PDFs."
+STATEMENT_PASSWORD:
+  title: "Statement password"
+  text: "Banks often protect emailed statements with a password based on your name, date of birth or customer ID. Enter it when you upload; we use it once to open the file and never store it."
+CIBIL:
+  title: "Credit bureau score"
+  text: "A score from a credit bureau such as CIBIL based on your past loans. If you have little or no history, we assess your business from its bank statements instead."

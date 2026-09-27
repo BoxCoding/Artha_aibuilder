@@ -41,7 +41,7 @@ def make_transactions(seed: int = 7, count: int = 70, opening: Decimal = Decimal
     rows: list[Txn] = []
     for i in range(count):
         day += timedelta(days=rng.choice([0, 1, 1, 2, 3]))
-        if rng.random() < 0.55:
+        if rng.random() < 0.55 or balance < Decimal("5000"):
             amount = Decimal(rng.randrange(1500, 95000)) + Decimal(rng.randrange(0, 100)) / 100
             balance += amount
             rows.append(Txn(day, rng.choice(NARRATIONS_CR), f"{rng.randrange(10**11, 10**12)}", Decimal("0"), amount,

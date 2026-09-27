@@ -75,6 +75,27 @@ class Settings(BaseSettings):
     pipeline_concurrency: int = 2
     queue_page_size: int = 200
 
+    # Events and analytics. EVENT_SINKS: comma list of "log", "pubsub".
+    event_sinks: str = "log"
+    event_relay_interval_seconds: float = 5.0
+    pubsub_topic: str | None = None               # projects/<p>/topics/ledgerlens-events
+    analytics_backend: Literal["local", "bigquery"] = "local"
+    bigquery_project: str | None = None
+    bigquery_dataset: str = "ledgerlens"
+
+    # Google Cloud AI services (each optional; local equivalents run when empty)
+    document_ai_processor: str | None = None       # projects/<p>/locations/<l>/processors/<id>
+    vertex_search_serving_config: str | None = None  # projects/<p>/locations/global/collections/default_collection/engines/<e>/servingConfigs/default_search
+    vertex_risk_endpoint: str | None = None        # projects/<p>/locations/<l>/endpoints/<id>
+
+    # Compliance
+    lender_name: str = "LedgerLens Finance Pvt Ltd (NBFC)"
+    grievance_officer: str = "Grievance Redressal Officer, grievance@lender.example, 1800-000-0000"
+    processing_fee_pct: float = 1.0
+    gst_on_fees_pct: float = 18.0
+    cooling_off_days: int = 3
+    cash_reporting_threshold: int = 1_000_000     # monthly cash deposits at or above this are reportable
+
     # Accounts
     allow_self_registration: bool = True
     password_min_length: int = 12

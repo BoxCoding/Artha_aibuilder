@@ -1,0 +1,9 @@
+# Placeholder watchlist for development and demonstration. Every name is fictional.
+# In production, replace this file (or WATCHLIST_PATH) with your licensed feed: UN Security Council
+# consolidated list, MHA UAPA designated list, and your internal negative list. Format: name,list,reason
+name,list,reason
+Crimson Hawala Exchange,internal-negative,Unlicensed money transfer operator
+Vikram Shadowline,internal-negative,Prior identity fraud
+Blue Lotus Shell Traders,internal-negative,Shell entity used for circular transfers
+Northstar Bullion Agents,sanctions-sample,Sample sanctions entry for testing
+Rakesh Umbra,sanctions-sample,Sample sanctions entry for testing

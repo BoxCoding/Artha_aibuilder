@@ -186,11 +186,18 @@ def challenge_score(features: dict[str, float], result: ScoreResult) -> tuple[di
     """
     from app.risk.ml_model import DISAGREEMENT_BANDS, load_model
 
+    from app.risk.ml_model import predict_remote
+
     model = load_model()
     if model is None:
         return {"available": False}, None
+    served_by = "local"
     try:
-        ml_pd = model.predict_pd(features)
+        remote = predict_remote(features)  # Vertex AI endpoint when configured
+        if remote is not None:
+            ml_pd, served_by = remote, "vertex_ai_endpoint"
+        else:
+            ml_pd = model.predict_pd(features)
     except Exception:  # noqa: BLE001 - never let the challenger break the decision path
         return {"available": False, "error": "prediction_failed"}, None
 
@@ -203,7 +210,7 @@ def challenge_score(features: dict[str, float], result: ScoreResult) -> tuple[di
         "available": True, "version": model.version, "ml_pd": round(ml_pd, 4),
         "scorecard_pd": result.pd, "delta": round(delta, 4), "disagrees": disagrees,
         "ml_band": ml_band, "scorecard_band": result.band, "band_distance": distance,
-        "gini_uplift": model.metrics.gini_uplift,
+        "gini_uplift": model.metrics.gini_uplift, "served_by": served_by,
     }
     if not disagrees:
         return summary, None

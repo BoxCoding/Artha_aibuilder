@@ -208,6 +208,27 @@ async def _run_llm_agent(case: Case, question: str, box: CaseToolbox, gateway: L
     return CopilotAnswer(text=text[:1200], evidence_ids=box.evidence_seen, tool_calls=box.calls, author="gemini")
 
 
+POLICY_QUESTION = re.compile(r"\b(policy|rule|clause|regulat|rbi|kfs|apr|four[- ]eyes|aml|watchlist|what does .* mean|"
+                             r"why (do|does|must|would) we|allowed to|required to)\b", re.I)
+
+
+def answer_from_knowledge(question: str) -> CopilotAnswer | None:
+    """Policy and procedure questions are answered from the policy corpus (Vertex AI Search or the local
+    index), quoting the passage and naming its source, instead of from the case tools."""
+    from app.knowledge.search import search
+
+    hits = search(question, audience="staff", k=3)
+    if not hits:
+        return None
+    top = hits[0]
+    text = f"{top['title']}: {top['text']}"
+    if len(hits) > 1:
+        text += " See also: " + "; ".join(f"{h['title']} [{h['source']}]" for h in hits[1:])
+    return CopilotAnswer(text=text[:1200], evidence_ids=[], author=f"knowledge:{top['engine']}",
+                         tool_calls=[{"tool": "search_policy", "args": {"query": question[:120]},
+                                      "sources": [h["source"] for h in hits]}])
+
+
 async def ask(case: Case, question: str, gateway: LLMGateway) -> CopilotAnswer:
     """Answer one underwriter question about one case."""
     hits = set(detect(question))
@@ -216,6 +237,10 @@ async def ask(case: Case, question: str, gateway: LLMGateway) -> CopilotAnswer:
     if hits - {"approve_directive"}:
         return CopilotAnswer("That message looks like an instruction aimed at the model rather than a question "
                              "about this case, so I have not acted on it.")
+    if POLICY_QUESTION.search(question) and not ACTION_REQUEST.search(question):
+        knowledge = answer_from_knowledge(question)
+        if knowledge:
+            return knowledge
     box = CaseToolbox(case)
     if not gateway.supports_tools:
         answer = _route_offline(case, question, box)

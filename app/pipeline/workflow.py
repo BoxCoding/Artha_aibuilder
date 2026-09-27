@@ -131,9 +131,19 @@ async def read_documents(rc: RunContext) -> dict[str, str | int | float]:
     parsers = []
     for doc_id, data in rc.files.items():
         parsed, parser = await asyncio.to_thread(read_deterministic, data)
+        settings = get_settings()
+        if parsed.needs_ai and parsed.reason == "no_text_layer" and settings.document_ai_processor:
+            from app.documents.document_ai import extract_with_document_ai
+
+            try:
+                ocr = await asyncio.to_thread(extract_with_document_ai, data)
+                if not ocr.needs_ai and reconciles(ocr.rows, ocr.opening_balance):
+                    parsed, parser = ocr, "document_ai"
+            except Exception:  # noqa: BLE001 - fall through to the model or a person
+                log.warning("document_ai_failed", extra={"case_id": rc.case.case_id})
         if parsed.needs_ai:
             problem = unreadable_message(parsed.reason, model_available=gateway.enabled,
-                                         vision_available=gateway.supports_vision)
+                                         vision_available=gateway.supports_vision or bool(settings.document_ai_processor))
             if problem:
                 raise UserFacingError(problem)
             try:
@@ -203,6 +213,14 @@ async def categorise(rc: RunContext) -> dict[str, str | int | float]:
 @step("forensics")
 async def forensics(rc: RunContext) -> dict[str, str | int | float]:
     signals = await asyncio.to_thread(run_rules, rc.case)
+    from app.forensics.network import network_signals
+
+    from app.compliance.aml import aml_signals
+
+    network = await asyncio.to_thread(network_signals, rc.case, rc.store)
+    compliance = await asyncio.to_thread(aml_signals, rc.case)
+    network = network + compliance
+    signals = signals + network
     rc.case.signals = signals  # visual inspector uses rule findings to choose crops
     visual = 0
     gateway = get_gateway()
@@ -214,7 +232,8 @@ async def forensics(rc: RunContext) -> dict[str, str | int | float]:
         except LLMUnavailable:
             visual = -1
     rc.forensic_signals = signals
-    return {"rule_findings": len(signals) - max(visual, 0), "visual_findings": visual}
+    return {"rule_findings": len(signals) - max(visual, 0) - len(network), "network_findings": len(network),
+            "visual_findings": visual}
 
 
 @step("cashflow")
@@ -274,7 +293,17 @@ async def memo_and_critic(rc: RunContext) -> dict[str, str | int | float]:
 
 @step("publish")
 async def publish(rc: RunContext) -> dict[str, str | int | float]:
+    from app.events import case_scored_payload, publish_event
+
     rc.case.status = CaseStatus.READY_FOR_REVIEW
+    payload = case_scored_payload(rc.case)
+    publish_event("case.scored", rc.case.case_id, **payload)
+    if payload["fraud_high"]:
+        publish_event("fraud.flagged", rc.case.case_id, case_id=rc.case.case_id, codes=payload["signal_codes"],
+                      fraud_high=payload["fraud_high"])
+    compliance = sorted({s.code for s in rc.case.signals if s.category == "COMPLIANCE"})
+    if compliance:
+        publish_event("compliance.alert", rc.case.case_id, case_id=rc.case.case_id, codes=compliance)
     return {"llm_calls": len(rc.meter.calls)}
 
 

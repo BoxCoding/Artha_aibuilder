@@ -33,6 +33,10 @@ key_terms:
   hi: "आपकी मासिक किश्त (EMI) {tenure} महीनों तक लगभग ₹{emi} होगी, सांकेतिक ब्याज दर {rate}% सालाना। हस्ताक्षर से पहले अंतिम शर्तें आपके 'की फैक्ट स्टेटमेंट' में होंगी।"
   id: "Cicilan bulanan Anda sekitar ₹{emi} selama {tenure} bulan, dengan perkiraan bunga {rate}% per tahun. Ketentuan akhir tercantum dalam ringkasan informasi pinjaman sebelum Anda menandatangani."
 reasons:
+  RC-COMPLIANCE-REVIEW:
+    en: "We need to complete some standard regulatory checks before a decision can be made."
+    hi: "फ़ैसले से पहले हमें कुछ मानक नियामक जाँचें पूरी करनी हैं।"
+    id: "Kami perlu menyelesaikan beberapa pemeriksaan regulasi standar sebelum keputusan dibuat."
   RC-PAYMENT-RETURNS:
     en: "Some of your loan instalments (EMIs) were returned because there was not enough money in the account."
     hi: "पिछले कुछ महीनों में आपकी कुछ लोन किश्तें (EMI) खाते में पैसे कम होने के कारण वापस लौट गईं।"

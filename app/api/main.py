@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from app.ai.explain import build_explanation, coach_reply
 from app.ai.gateway import UsageMeter, get_gateway
@@ -32,6 +33,7 @@ from app.documents.render import render_crop, render_page_png
 from app.domain.models import (OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Document, Explanation, Outcome, Role)
 from app.domain.store import CaseNotFound, get_store
 from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, get_accounts
+from app.events import publish_event
 from app.pipeline.workflow import mark_needs_manual, submit_case
 from app.synthetic.generator import PERSONAS, persona_statement, render_pdf
 
@@ -72,11 +74,28 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
                                          f"store={'sql' if settings.database_url else 'memory'} "
                                          f"receipt_key={_signer.key_id}"})
     _ready["value"] = True
+    relay_task = None
+    if settings.pipeline_mode == "inline":
+        # Single-process mode has no worker, so the API relays events itself.
+        relay_task = asyncio.create_task(_relay_loop(settings.event_relay_interval_seconds))
     try:
         yield
     finally:
         _ready["value"] = False
+        if relay_task:
+            relay_task.cancel()
         log.info("shutdown", extra={"detail": "draining"})
+
+
+async def _relay_loop(interval: float) -> None:
+    from app.events import relay_once
+
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await asyncio.to_thread(relay_once)
+        except Exception:  # noqa: BLE001
+            log.warning("event_relay_error", exc_info=True)
 
 
 app = FastAPI(title="LedgerLens", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None,
@@ -287,6 +306,15 @@ async def change_password(payload: ChangePasswordRequest, response: Response,
     return {"status": "changed"}
 
 
+@app.get("/api/knowledge/search")
+async def knowledge_search(q: str, principal: Principal = Depends(limiter(60, 60))) -> dict[str, Any]:
+    """Policy and glossary search. Customers see the glossary only; staff also see policy and design docs."""
+    from app.knowledge.search import search
+
+    audience = "customer" if principal.role == Role.BORROWER else "staff"
+    return {"results": await asyncio.to_thread(search, q, audience, 5), "audience": audience}
+
+
 @app.get("/api/me")
 async def me(principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     settings = get_settings()
@@ -322,6 +350,9 @@ async def create_case(payload: CreateCaseRequest,
     store.add(case)
     store.audit(principal.uid, principal.role.value, "CREATE_CASE", case.case_id,
                 {"amount": payload.requested_amount, "tenure": payload.tenure_months, "channel": case.channel})
+    publish_event("case.created", case.case_id, case_id=case.case_id, channel=case.channel,
+                  requested_amount=payload.requested_amount, tenure_months=payload.tenure_months,
+                  industry=applicant.industry, state=applicant.state, constitution=applicant.constitution.value)
     return {"case_id": case.case_id, "warnings": applicant.warnings()}
 
 
@@ -343,7 +374,8 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
     reading = await asyncio.to_thread(preview_statement, prepared.data)
     gateway = get_gateway()
     problem = None if reading["readable"] else unreadable_message(
-        reading["reason"], model_available=gateway.enabled, vision_available=gateway.supports_vision)  # type: ignore[arg-type]
+        reading["reason"], model_available=gateway.enabled,  # type: ignore[arg-type]
+        vision_available=gateway.supports_vision or bool(settings.document_ai_processor))
     if problem:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, problem)
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
@@ -359,6 +391,9 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
     store.audit(principal.uid, principal.role.value, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}",
                 {"bytes": len(data), "decrypted": prepared.decrypted, "readable": reading["readable"]})
     note = None if reading["readable"] else "This layout will be read by the AI model when you submit."
+    publish_event("document.uploaded", case_id, case_id=case_id, doc_id=doc_id, pages=prepared.page_count,
+                  decrypted=prepared.decrypted, reader=reading["reader"], readable=reading["readable"],
+                  transactions=reading["transactions"])
     return {"doc_id": doc_id, "filename": filename, "preview": reading, "note": note}
 
 
@@ -415,6 +450,7 @@ async def submit(case_id: str, principal: Principal = Depends(limiter(20))) -> d
         live.events = []
         documents = len(live.documents)
     store.audit(principal.uid, principal.role.value, "SUBMIT_CASE", case_id, {"documents": documents})
+    publish_event("case.submitted", case_id, case_id=case_id, documents=documents)
     try:
         job = await asyncio.to_thread(submit_case, case_id)
     except Exception as exc:
@@ -583,6 +619,12 @@ async def decide(case_id: str, payload: DecisionRequest,
         if not live.policy:
             raise HTTPException(status.HTTP_409_CONFLICT, "Analysis has not finished for this case.")
         policy = live.policy
+        if outcome.value.startswith("APPROVE"):
+            from app.compliance.checklist import approval_blockers
+
+            blockers = approval_blockers(live)
+            if blockers:
+                raise HTTPException(status.HTTP_409_CONFLICT, " ".join(blockers))
         override = outcome != policy.outcome
         if override and not (payload.reason and payload.reason.strip()):
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
@@ -618,6 +660,14 @@ async def decide(case_id: str, payload: DecisionRequest,
             live.pending_decision = None
             live.status = OUTCOME_TO_STATUS[outcome]
             recorded = True
+            if outcome.value.startswith("APPROVE") and amount:
+                from app.compliance.kfs import build_kfs
+                from app.api.views import effective_rate
+
+                rate = effective_rate(live)
+                if rate:
+                    live.kfs = build_kfs(live.case_id, amount, Decimal(str(rate)), policy.tenure_months,
+                                         live.business_name)
         second_approver = live.decision.second_approver if recorded and live.decision else None
 
     if not recorded:
@@ -627,6 +677,9 @@ async def decide(case_id: str, payload: DecisionRequest,
     store.audit(principal.uid, principal.role.value, "DECISION_RECORDED", case_id,
                 {"outcome": outcome.value, "amount": str(amount), "override": override,
                  "second_approver": second_approver})
+    publish_event("decision.recorded", case_id, case_id=case_id, outcome=outcome.value,
+                  approved_amount=float(amount) if amount else None, override=override,
+                  four_eyes=second_approver is not None)
     await _ensure_explanations(case_id)
     return {"status": "recorded", "outcome": outcome.value}
 
@@ -644,8 +697,81 @@ async def _ensure_explanations(case_id: str) -> None:
     built: dict[str, Explanation] = {}
     for lang in languages:
         built[lang] = await build_explanation(case, lang, get_gateway(), meter)
+    from app.advice.recommend import build as build_recommendations
+
     with store.mutate(case_id) as live:
         live.explanations.update(built)
+        live.recommendations = build_recommendations(live, live.language)
+
+
+@app.get("/api/cases/{case_id}/kfs")
+async def get_kfs(case_id: str, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    case = get_store().get(case_id)
+    authorise_case(case, principal)
+    if not case.kfs:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "A Key Fact Statement is issued when a loan is approved.")
+    return case.kfs | {"accepted_at": case.kfs_accepted_at}
+
+
+@app.post("/api/cases/{case_id}/kfs/accept")
+async def accept_kfs(case_id: str, principal: Principal = Depends(limiter(10, 300))) -> dict[str, Any]:
+    """The customer (or the loan officer, recording acceptance in person) accepts the KFS: the disbursal gate."""
+    store = get_store()
+    authorise_case(store.get(case_id), principal)
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the customer or their loan officer can accept the KFS.")
+    with store.mutate(case_id) as live:
+        if not live.kfs:
+            raise HTTPException(status.HTTP_409_CONFLICT, "There is no Key Fact Statement to accept.")
+        if live.kfs_accepted_at is None:
+            live.kfs_accepted_at = datetime.now(timezone.utc)
+        accepted = live.kfs_accepted_at
+        digest = live.kfs["kfs_sha256"]
+    store.audit(principal.uid, principal.role.value, "KFS_ACCEPTED", case_id, {"kfs_sha256": digest})
+    publish_event("kfs.accepted", case_id, case_id=case_id, kfs_sha256=digest)
+    return {"status": "accepted", "accepted_at": accepted}
+
+
+class ClearanceRequest(BaseModel):
+    code: str = Field(max_length=20)
+    note: str = Field(min_length=10, max_length=500)
+
+
+@app.post("/api/cases/{case_id}/compliance/clear")
+async def clear_compliance(case_id: str, payload: ClearanceRequest,
+                           principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
+    """Compliance records that a watchlist match was reviewed and is a false positive (or acceptable)."""
+    store = get_store()
+    with store.mutate(case_id) as live:
+        if not any(s.code == payload.code and s.category == "COMPLIANCE" for s in live.signals):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No such compliance finding on this case.")
+        live.compliance_clearances.append({"code": payload.code, "note": payload.note.strip(), "by": principal.uid,
+                                           "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    store.audit(principal.uid, principal.role.value, "COMPLIANCE_CLEARED", case_id, {"code": payload.code})
+    return {"status": "cleared", "code": payload.code}
+
+
+@app.get("/api/cases/{case_id}/compliance")
+async def compliance_report(case_id: str, principal: Principal = Depends(
+        require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> dict[str, Any]:
+    """Everything an auditor asks for about one case, in one document."""
+    from app.compliance.checklist import evaluate
+
+    store = get_store()
+    case = await asyncio.to_thread(store.get, case_id)
+    trail = await asyncio.to_thread(store.audit_for, case_id)
+    return {
+        "case_id": case_id, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "checklist": evaluate(case),
+        "compliance_findings": [s.model_dump() for s in case.signals if s.category == "COMPLIANCE"],
+        "clearances": case.compliance_clearances,
+        "kfs": case.kfs, "kfs_accepted_at": case.kfs_accepted_at,
+        "decision": case.decision.model_dump(mode="json") if case.decision else None,
+        "policy": {"id": case.policy.policy_id, "version": case.policy.policy_version,
+                   "clauses": case.policy.triggered_rules} if case.policy else None,
+        "audit_trail": [e.model_dump(mode="json") for e in trail],
+        "audit_chain_valid": await asyncio.to_thread(store.verify_audit_chain),
+    }
 
 
 @app.get("/api/cases/{case_id}/explanation")
@@ -699,6 +825,18 @@ async def risk_overview(principal: Principal = Depends(require_roles(Role.RISK_A
 
         payload["pipeline_jobs"] = await asyncio.to_thread(get_queue().depth)
     return payload
+
+
+@app.get("/api/risk/portfolio")
+async def risk_portfolio(principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
+    """Portfolio analytics: local summaries, or BigQuery over the event stream when configured."""
+    from app.analytics.portfolio import portfolio
+
+    store = get_store()
+    summaries = await asyncio.to_thread(store.summaries)
+    result = await asyncio.to_thread(portfolio, summaries)
+    result["events"] = await asyncio.to_thread(store.event_counts)
+    return result
 
 
 @app.get("/api/healthz")

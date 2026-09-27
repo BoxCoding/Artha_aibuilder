@@ -101,7 +101,7 @@ class Document(Strict):
     size_bytes: int
     page_count: int
     doc_type: str = "bank_statement"
-    parser: Literal["template", "universal", "gemini", "ollama", "none"] = "none"
+    parser: Literal["template", "universal", "document_ai", "gemini", "ollama", "none"] = "none"
     header: StatementHeader = Field(default_factory=StatementHeader)
     metadata: dict[str, str] = Field(default_factory=dict)
     incremental_updates: int = 0
@@ -113,7 +113,7 @@ class Document(Strict):
 class Signal(Strict):
     signal_id: str
     code: str
-    category: Literal["FRAUD", "RISK", "POSITIVE"]
+    category: Literal["FRAUD", "RISK", "POSITIVE", "COMPLIANCE"]
     severity: Literal["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
     confidence: float = Field(ge=0, le=1)
     detector: Literal["RULE", "LLM_VISUAL", "MODEL_ARMOR"]
@@ -239,6 +239,10 @@ class Case(Strict):
     applicant: ApplicantProfile | None = None
     channel: Literal["self", "assisted"] = "self"
     sourced_by: str | None = None
+    kfs: dict[str, Any] | None = None
+    kfs_accepted_at: datetime | None = None
+    compliance_clearances: list[dict[str, str]] = Field(default_factory=list)
+    recommendations: dict[str, Any] = Field(default_factory=dict)
     status: CaseStatus = CaseStatus.DRAFT
     consent_given_at: datetime | None = None
     consent_notice_version: str | None = None

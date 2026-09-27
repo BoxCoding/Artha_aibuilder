@@ -103,6 +103,32 @@ jobs = Table(
 )
 Index("ix_pipeline_jobs_claim", jobs.c.state, jobs.c.lease_until)
 
+outbox = Table(
+    "outbox_events", metadata,
+    Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True),
+    Column("topic", String(60), nullable=False),
+    Column("key", String(60), nullable=False),
+    Column("payload", JsonType, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("published_at", DateTime(timezone=True), nullable=True),
+    Column("attempts", Integer, nullable=False, default=0),
+)
+Index("ix_outbox_unpublished", outbox.c.published_at, outbox.c.id)
+
+# Keyed hashes (HMAC with the service secret) of identifiers that link applications: statement files,
+# bank accounts, PAN, mobile. Lets the pipeline find the same document or account under a different
+# applicant without storing the identifiers themselves a second time.
+fingerprints = Table(
+    "fingerprints", metadata,
+    Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True),
+    Column("case_id", String(40), nullable=False, index=True),
+    Column("kind", String(20), nullable=False),
+    Column("value_hash", String(64), nullable=False),
+    Column("owner_hash", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+Index("ix_fingerprints_lookup", fingerprints.c.kind, fingerprints.c.value_hash)
+
 rate_limits = Table(
     "rate_limits", metadata,
     Column("bucket", String(200), primary_key=True),

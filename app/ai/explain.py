@@ -159,7 +159,18 @@ def coach_offline(expl: Explanation, message: str) -> CoachDraft:
     return CoachDraft(reply=" ".join(parts), offer_callback=False)
 
 
+GLOSSARY_QUESTION = re.compile(r"\b(what is|what's|what does|meaning|mean|explain|kya hai|kya hota|apa itu|apa arti)\b"
+                               r"|\b(apr|kfs|emi|nach|cooling|prepay|penal|grievance|complain|udyam|gstin|cibil|"
+                               r"aggregator|password)\b", re.I)
+
+
 async def coach_reply(expl: Explanation, message: str, gateway: LLMGateway, meter: UsageMeter) -> tuple[CoachDraft, str]:
+    if not detect(message) and GLOSSARY_QUESTION.search(message):
+        from app.knowledge.search import search
+
+        hits = search(message, audience="customer", k=1)
+        if hits:
+            return CoachDraft(reply=f"{hits[0]['title']}: {hits[0]['text']}", offer_callback=False), "glossary"
     if detect(message) or not gateway.enabled:
         return coach_offline(expl, message), "templates"
     payload = {"language": expl.language, "explanation": expl.model_dump(), "user_message": message[:500]}

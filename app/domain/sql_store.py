@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import Engine, delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from app.db import audit_log, callbacks, cases, documents, is_postgres, jobs, sqlite_write_lock
+from app.db import audit_log, callbacks, cases, documents, fingerprints, is_postgres, jobs, outbox, sqlite_write_lock
 from app.domain.models import AuditEvent, Case, CaseStatus
 from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, chain_hash, owner_row,
                               queue_row)
@@ -185,6 +185,17 @@ class SqlStore:
                            resource=r.resource, detail_hash=r.detail_hash, prev_hash=r.prev_hash,
                            event_hash=r.event_hash) for r in reversed(rows)]
 
+    def audit_for(self, case_id: str, limit: int = 500) -> list[AuditEvent]:
+        from sqlalchemy import or_
+
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(audit_log).where(or_(audit_log.c.resource == case_id,
+                                                            audit_log.c.resource.like(f"{case_id}/%")))
+                                .order_by(audit_log.c.seq).limit(limit)).all()
+        return [AuditEvent(seq=r.seq, at=datetime.fromisoformat(r.at), actor=r.actor, role=r.role, action=r.action,
+                           resource=r.resource, detail_hash=r.detail_hash, prev_hash=r.prev_hash,
+                           event_hash=r.event_hash) for r in rows]
+
     def verify_audit_chain(self) -> bool:
         """Recompute every link from the stored text. Streams rows, so memory stays flat."""
         prev, expected_seq = GENESIS_HASH, 1
@@ -204,6 +215,7 @@ class SqlStore:
             conn.execute(delete(documents).where(documents.c.case_id == case_id))
             conn.execute(delete(jobs).where(jobs.c.case_id == case_id))
             conn.execute(delete(callbacks).where(callbacks.c.case_id == case_id))
+            conn.execute(delete(fingerprints).where(fingerprints.c.case_id == case_id))
             return conn.execute(delete(cases).where(cases.c.case_id == case_id)).rowcount > 0
 
     def sweep_expired(self, max_age_seconds: int) -> int:
@@ -211,6 +223,55 @@ class SqlStore:
         with self.engine.connect() as conn:
             stale = conn.execute(select(cases.c.case_id).where(cases.c.updated_at < cutoff)).scalars().all()
         return sum(int(self.delete_case(cid)) for cid in stale)
+
+    # ------------------------------------------------------------------ events (outbox)
+    def emit(self, topic: str, key: str, payload: dict[str, Any]) -> None:
+        with self._write_guard(), self.engine.begin() as conn:
+            conn.execute(insert(outbox).values(topic=topic, key=key, payload=payload, attempts=0,
+                                               created_at=datetime.now(timezone.utc)))
+
+    def pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(outbox).where(outbox.c.published_at.is_(None))
+                                .order_by(outbox.c.id).limit(limit)).all()
+        return [{"id": r.id, "topic": r.topic, "key": r.key, "payload": r.payload, "created_at": r.created_at,
+                 "attempts": r.attempts} for r in rows]
+
+    def mark_events(self, ids: list[int], published: bool) -> None:
+        if not ids:
+            return
+        values: dict[str, Any] = {"attempts": outbox.c.attempts + 1}
+        if published:
+            values["published_at"] = datetime.now(timezone.utc)
+        with self._write_guard(), self.engine.begin() as conn:
+            conn.execute(update(outbox).where(outbox.c.id.in_(ids)).values(**values))
+
+    def event_counts(self) -> dict[str, int]:
+        with self.engine.connect() as conn:
+            total = int(conn.execute(select(func.count()).select_from(outbox)).scalar() or 0)
+            pending = int(conn.execute(select(func.count()).select_from(outbox)
+                                       .where(outbox.c.published_at.is_(None))).scalar() or 0)
+        return {"published": total - pending, "pending": pending}
+
+    # ------------------------------------------------------------------ fingerprints
+    def set_fingerprints(self, case_id: str, owner_hash: str, items: list[tuple[str, str]]) -> None:
+        now = datetime.now(timezone.utc)
+        with self._write_guard(), self.engine.begin() as conn:
+            conn.execute(delete(fingerprints).where(fingerprints.c.case_id == case_id))
+            if items:
+                conn.execute(insert(fingerprints), [{"case_id": case_id, "kind": k, "value_hash": v,
+                                                     "owner_hash": owner_hash, "created_at": now} for k, v in items])
+
+    def match_fingerprints(self, case_id: str, items: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        if not items:
+            return []
+        from sqlalchemy import and_, or_
+
+        clause = or_(*[and_(fingerprints.c.kind == k, fingerprints.c.value_hash == v) for k, v in items])
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(fingerprints).where(clause, fingerprints.c.case_id != case_id)).all()
+        return [{"case_id": r.case_id, "kind": r.kind, "value_hash": r.value_hash, "owner_hash": r.owner_hash,
+                 "created_at": r.created_at} for r in rows]
 
     def ping(self) -> bool:
         try:

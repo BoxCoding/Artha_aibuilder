@@ -201,3 +201,29 @@ def save(estimator: Any, metrics: ModelMetrics) -> None:
     joblib.dump(estimator, MODEL_PATH)
     METRICS_PATH.write_text(json.dumps(metrics.as_dict(), indent=2), encoding="utf-8")
     load_model.cache_clear()
+
+
+def predict_remote(features: dict[str, float]) -> float | None:
+    """Score on the Vertex AI endpoint when VERTEX_RISK_ENDPOINT is set; None to use the local artifact.
+
+    The deployed model is the same versioned artifact (see deploy/README.md: upload risk_model.joblib to
+    Vertex AI Model Registry with the scikit-learn prediction container). Any failure falls back to the
+    local copy, so an endpoint outage never blocks a recommendation.
+    """
+    from app.config import get_settings
+
+    endpoint = get_settings().vertex_risk_endpoint
+    if not endpoint:
+        return None
+    from app.gcp import GcpError, get_gcp
+
+    location = endpoint.split("/locations/")[1].split("/")[0]
+    try:
+        result = get_gcp().call("POST", f"https://{location}-aiplatform.googleapis.com/v1/{endpoint}:predict",
+                                {"instances": [to_vector(features)]})
+        prediction = result["predictions"][0]
+        probability = float(prediction[-1] if isinstance(prediction, list) else prediction)
+    except (GcpError, KeyError, IndexError, TypeError, ValueError):
+        log.warning("vertex_endpoint_unavailable")
+        return None
+    return probability if 0.0 <= probability <= 1.0 else None

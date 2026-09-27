@@ -11,12 +11,15 @@ clauses:
   POL-SIZING: "The loan amount is the lowest of the requested amount, the product maximum, four times the average daily balance, and the amount whose instalment fits within half of the monthly surplus after existing instalments."
   POL-MODEL-CHALLENGE: "Where the transparent scorecard and the learned challenger model disagree materially about an application, the case is referred for human assessment rather than decided automatically."
   POL-FOUR-EYES: "Approvals above 5,00,000 require a second approver."
+  POL-AML: "Applications where the applicant, the business or a statement counterparty matches a sanctions or internal watchlist are referred to compliance and cannot be approved until compliance clears the match."
+  POL-KFS: "Every approval is accompanied by a Key Fact Statement stating the APR and all charges, which the borrower must accept before disbursal."
 knockouts:
   - {id: KO-INTEGRITY, clause: POL-INTEGRITY, signal_category: FRAUD, min_severity: HIGH, outcome: REFER_INTEGRITY_REVIEW, reason_code: RC-DOCUMENT-VERIFICATION}
   - {id: KO-HISTORY, clause: POL-HISTORY, feature: statement_span_months, op: lt, value: 6, outcome: DECLINE, reason_code: RC-SHORT-HISTORY}
   - {id: KO-BOUNCES, clause: POL-BOUNCES, feature: nach_returns_3m, op: gte, value: 3, outcome: DECLINE, reason_code: RC-PAYMENT-RETURNS}
 soft_rules:
   - {id: SR-MODEL-DISAGREE, clause: POL-MODEL-CHALLENGE, signal_code: RK-MODEL-DISAGREE, outcome: REFER, reason_code: RC-MODEL-DISAGREEMENT, condition: "The two risk models disagree about this application; a human must assess it."}
+  - {id: SR-AML, clause: POL-AML, signal_category: COMPLIANCE, min_severity: HIGH, outcome: REFER, reason_code: RC-COMPLIANCE-REVIEW, condition: "Compliance must review and clear the watchlist match before approval."}
   - {id: SR-META-VERIFY, clause: POL-META-VERIFY, signal_category: FRAUD, min_severity: MEDIUM, outcome: REFER, reason_code: RC-DOCUMENT-VERIFICATION, condition: "Re-verify the bank statement directly with the bank or via a consented account-aggregator fetch."}
 bands:
   A: APPROVE

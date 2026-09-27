@@ -78,12 +78,23 @@ class Worker:
             if claim is None:
                 if index == 0:
                     await self._maybe_sweep()
+                    await self._relay_events()
                 try:
                     await asyncio.wait_for(self.stopping.wait(), timeout=self.settings.worker_poll_seconds)
                 except TimeoutError:
                     pass
                 continue
             await self.process(claim)
+
+    async def _relay_events(self) -> None:
+        from app.events import relay_once
+
+        try:
+            sent = await asyncio.to_thread(relay_once)
+            if sent:
+                log.info("events_relayed", extra={"detail": f"count={sent}"})
+        except Exception:  # noqa: BLE001
+            log.warning("event_relay_error", exc_info=True)
 
     async def _maybe_sweep(self) -> None:
         now = time.monotonic()

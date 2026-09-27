@@ -49,6 +49,14 @@ def case_summary(case: Case) -> dict[str, Any]:
                       "reason": decision.reason} if decision and decision.override else None),
         "memo": ({"revisions": memo.iterations - 1, "dropped": len(memo.dropped_claims),
                   "critic_issues": len(memo.critic_issues)} if memo else None),
+        # dimensions for portfolio analytics (no personal data)
+        "created": case.created_at.date().isoformat(),
+        "channel": case.channel,
+        "industry": case.applicant.industry if case.applicant else None,
+        "state": case.applicant.state if case.applicant else None,
+        "pd": round(case.score.pd, 5) if case.score else None,
+        "outcome": decision.final_outcome.value if decision else None,
+        "status": case.status.value,
     }
 
 
@@ -97,9 +105,17 @@ class CaseStore(Protocol):
     def audit_head(self) -> tuple[str, int]: ...
     def audit_events(self, limit: int = 100) -> list[AuditEvent]: ...
     def verify_audit_chain(self) -> bool: ...
+    def audit_for(self, case_id: str, limit: int = 500) -> list[AuditEvent]: ...
     def delete_case(self, case_id: str) -> bool: ...
     def sweep_expired(self, max_age_seconds: int) -> int: ...
     def ping(self) -> bool: ...
+    # events (outbox) and cross-application fingerprints
+    def emit(self, topic: str, key: str, payload: dict[str, Any]) -> None: ...
+    def pending_events(self, limit: int = 100) -> list[dict[str, Any]]: ...
+    def mark_events(self, ids: list[int], published: bool) -> None: ...
+    def event_counts(self) -> dict[str, int]: ...
+    def set_fingerprints(self, case_id: str, owner_hash: str, items: list[tuple[str, str]]) -> None: ...
+    def match_fingerprints(self, case_id: str, items: list[tuple[str, str]]) -> list[dict[str, Any]]: ...
 
 
 class InMemoryStore:
@@ -112,6 +128,8 @@ class InMemoryStore:
         self._callbacks: list[dict[str, str]] = []
         self._protected: set[str] = set()
         self._max = max_cases
+        self._events: list[dict[str, Any]] = []
+        self._prints: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ cases
     def add(self, case: Case, protected: bool = False) -> None:
@@ -231,6 +249,7 @@ class InMemoryStore:
             if case is None:
                 return False
             self._versions.pop(case_id, None)
+            self._prints = [p for p in self._prints if p["case_id"] != case_id]
             for document in case.documents:
                 self._files.pop(f"{case_id}/{document.doc_id}", None)
             self._protected.discard(case_id)
@@ -253,8 +272,48 @@ class InMemoryStore:
         with self._lock:
             return verify_chain(self._audit)
 
+    def audit_for(self, case_id: str, limit: int = 500) -> list[AuditEvent]:
+        with self._lock:
+            return [e for e in self._audit if e.resource == case_id or e.resource.startswith(f"{case_id}/")][-limit:]
+
     def ping(self) -> bool:
         return True
+
+    # ------------------------------------------------------------------ events & fingerprints
+    def emit(self, topic: str, key: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._events.append({"id": len(self._events) + 1, "topic": topic, "key": key, "payload": payload,
+                                 "created_at": datetime.now(timezone.utc), "published_at": None, "attempts": 0})
+
+    def pending_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(e) for e in self._events if e["published_at"] is None][:limit]
+
+    def mark_events(self, ids: list[int], published: bool) -> None:
+        with self._lock:
+            for e in self._events:
+                if e["id"] in ids:
+                    e["attempts"] += 1
+                    if published:
+                        e["published_at"] = datetime.now(timezone.utc)
+
+    def event_counts(self) -> dict[str, int]:
+        with self._lock:
+            done = sum(1 for e in self._events if e["published_at"])
+            return {"published": done, "pending": len(self._events) - done}
+
+    def set_fingerprints(self, case_id: str, owner_hash: str, items: list[tuple[str, str]]) -> None:
+        with self._lock:
+            self._prints = [p for p in self._prints if p["case_id"] != case_id]
+            now = datetime.now(timezone.utc)
+            self._prints += [{"case_id": case_id, "kind": k, "value_hash": v, "owner_hash": owner_hash,
+                              "created_at": now} for k, v in items]
+
+    def match_fingerprints(self, case_id: str, items: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        wanted = set(items)
+        with self._lock:
+            return [dict(p) for p in self._prints
+                    if p["case_id"] != case_id and (p["kind"], p["value_hash"]) in wanted]
 
 
 # --------------------------------------------------------------------------- audit chain helpers
