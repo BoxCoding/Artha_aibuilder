@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LedgerLens Dossier</title>
+<meta name="description" content="How LedgerLens reads, checks and scores a bank statement, and why a person always makes the lending decision.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,650;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #f3f6f1;
+  --paper-2: #e8efe7;
+  --sheet: #fbfcf8;
+  --rule: #d3dfd5;
+  --rule-strong: #a8bead;
+  --margin-line: #e3a7a0;
+  --ink: #15213b;
+  --ink-soft: #4d5a70;
+  --ink-faint: #7b8699;
+  --lens: #5b3fd9;
+  --lens-wash: #ece8fb;
+  --stamp: #c2382e;
+  --stamp-wash: #fbe8e5;
+  --ok: #0f8a7e;
+  --ok-wash: #def3ee;
+  --amber: #a86400;
+  --amber-wash: #fcefd7;
+  --shadow: 0 18px 40px -22px rgba(21, 33, 59, .35);
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0c1316; --paper-2: #111c20; --sheet: #142126; --rule: #213538; --rule-strong: #3a5957; --margin-line: #6b3a36;
+    --ink: #e7eee9; --ink-soft: #a3b5af; --ink-faint: #74877f;
+    --lens: #a592ff; --lens-wash: #241f45; --stamp: #ff8b7b; --stamp-wash: #3a1d1b; --ok: #4fd3c1; --ok-wash: #123330;
+    --amber: #f1b45c; --amber-wash: #35270f; --shadow: 0 18px 40px -22px rgba(0, 0, 0, .8);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0c1316; --paper-2: #111c20; --sheet: #142126; --rule: #213538; --rule-strong: #3a5957; --margin-line: #6b3a36;
+  --ink: #e7eee9; --ink-soft: #a3b5af; --ink-faint: #74877f;
+  --lens: #a592ff; --lens-wash: #241f45; --stamp: #ff8b7b; --stamp-wash: #3a1d1b; --ok: #4fd3c1; --ok-wash: #123330;
+  --amber: #f1b45c; --amber-wash: #35270f; --shadow: 0 18px 40px -22px rgba(0, 0, 0, .8);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16.5px;
+  line-height: 1.6;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(90deg, transparent calc(clamp(16px, 4vw, 56px) - 1px), var(--margin-line) calc(clamp(16px, 4vw, 56px) - 1px), var(--margin-line) clamp(16px, 4vw, 56px), transparent clamp(16px, 4vw, 56px)),
+    repeating-linear-gradient(180deg, transparent 0 31px, var(--rule) 31px 32px);
+  background-attachment: fixed;
+  font-variant-numeric: tabular-nums;
+}
+.page { max-width: 1180px; margin: 0 auto; padding-inline: clamp(24px, 6vw, 88px) clamp(16px, 4vw, 48px); padding-block: 0 5rem; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.08; text-wrap: balance; margin: 0; }
+h2 { font-size: clamp(1.7rem, 3.4vw, 2.5rem); font-weight: 800; letter-spacing: -.015em; }
+h3 { font-size: 1.15rem; font-weight: 650; }
+p { max-width: 66ch; margin: 0; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+a { color: var(--lens); }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--lens) 55%, transparent); outline-offset: 3px; border-radius: 4px; }
+
+/* ------------------------------------------------------------ top bar */
+.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: .7rem 0; background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--rule); }
+.brand { display: flex; align-items: center; gap: .55rem; font-family: var(--display); font-weight: 800; font-size: 1.15rem; }
+.brand svg { width: 28px; height: 28px; }
+.topbar nav { margin-left: auto; display: flex; gap: .2rem; flex-wrap: wrap; }
+.topbar nav a { font-size: .82rem; color: var(--ink-soft); text-decoration: none; padding: .25rem .55rem; border-radius: 6px; }
+.topbar nav a:hover { color: var(--lens); background: var(--lens-wash); }
+@media (max-width: 760px) { .topbar nav { display: none; } }
+
+/* ------------------------------------------------------------ hero */
+.hero { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: clamp(2rem, 5vw, 4rem); align-items: center; padding-block: clamp(2.5rem, 7vw, 5rem) 3rem; }
+@media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+.folio { font-family: var(--mono); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); }
+.hero h1 { font-size: clamp(3rem, 8vw, 5.6rem); font-weight: 800; letter-spacing: -.035em; margin: .6rem 0 .5rem; }
+.hero h1 span { color: var(--lens); }
+.hero .tag { font-family: var(--display); font-weight: 500; font-size: clamp(1.2rem, 2.4vw, 1.6rem); color: var(--ink-soft); margin-bottom: 1.2rem; }
+.hero p.lede { font-size: 1.08rem; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; margin-top: 1.8rem; max-width: 560px; }
+.fact { border-top: 2px solid var(--ink); padding-top: .5rem; }
+.fact b { display: block; font-family: var(--display); font-size: 1.9rem; font-weight: 800; line-height: 1; }
+.fact span { font-size: .8rem; color: var(--ink-soft); }
+@media (max-width: 520px) { .facts { grid-template-columns: 1fr; } }
+
+/* the statement under the lens */
+.stmt { position: relative; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 6px; box-shadow: var(--shadow); padding: 1rem 1.1rem 1.2rem; overflow: hidden; }
+.stmt-head { display: flex; justify-content: space-between; gap: 1rem; height: 2.35rem; align-items: center; white-space: nowrap; font-family: var(--mono); font-size: .7rem; color: var(--ink-soft); border-bottom: 2px solid var(--ink); margin-bottom: 0; }
+.stmt-row { display: grid; grid-template-columns: 5rem minmax(0, 1fr) 5.6rem 6rem; gap: .5rem; font-family: var(--mono); font-size: .74rem; height: 2.1rem; align-items: center; padding: 0 .2rem; border-bottom: 1px dashed var(--rule); }
+.stmt-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stmt-row span:nth-child(n+3) { text-align: right; }
+.stmt-row.hdr { height: 2.1rem; font-weight: 600; color: var(--ink-faint); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--rule-strong); }
+.stmt-row.edited .amt { color: var(--stamp); font-weight: 600; }
+.stmt-row.edited .bal { text-decoration: line-through wavy var(--stamp); }
+/* Anchored to the deposit column: 1.1rem card padding + 6rem balance + .5rem gap + half of the 5.6rem
+   deposit column, less the glass radius. It comes to rest over the edited 19 July deposit. */
+.lens { position: absolute; right: calc(1.1rem + 6rem + .5rem + 2.8rem - 52px); top: 0; width: 132px; height: 132px; pointer-events: none;
+  transform: translate(0, calc(1rem + 2.35rem + 2.1rem * 3 + 1.05rem - 52px)); animation: sweep 3.6s cubic-bezier(.6, 0, .3, 1) .3s 1 both; }
+.lens circle.glass { fill: color-mix(in srgb, var(--lens) 10%, transparent); stroke: var(--lens); stroke-width: 5; }
+.lens path { stroke: var(--lens); stroke-width: 9; stroke-linecap: round; }
+@keyframes sweep {
+  0% { transform: translate(-240px, 20px); }
+  35% { transform: translate(-40px, 40px); }
+  65% { transform: translate(-150px, 150px); }
+  100% { transform: translate(0, calc(1rem + 2.35rem + 2.1rem * 3 + 1.05rem - 52px)); }
+}
+.stamp { position: relative; display: inline-block; margin: .9rem 0 0 auto; float: right; transform: rotate(-4deg); border: 2.5px solid var(--stamp); color: var(--stamp); background: var(--stamp-wash);
+  font-family: var(--mono); font-size: .72rem; font-weight: 600; letter-spacing: .04em; padding: .35rem .6rem; border-radius: 4px; text-transform: uppercase; line-height: 1.35;
+  animation: thump .5s ease-out 3.7s 1 both; }
+@keyframes thump { 0% { transform: rotate(-4deg) scale(1.35); opacity: .45; } 100% { transform: rotate(-4deg) scale(1); opacity: 1; } }
+.stmt::after { content: ""; display: block; clear: both; }
+@media (prefers-reduced-motion: reduce) { .lens, .stamp { animation: none; } }
+
+/* ------------------------------------------------------------ sections */
+section.block { padding-block: 3.2rem 1rem; border-top: 1px solid var(--rule-strong); }
+.sec-head { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 1rem; align-items: baseline; margin-bottom: 1.6rem; }
+.sec-head .folio { padding-top: .6rem; }
+.sec-head p { margin-top: .6rem; color: var(--ink-soft); }
+@media (max-width: 640px) { .sec-head { grid-template-columns: 1fr; gap: .2rem; } }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+.card { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.1rem; }
+.card h3 { margin-bottom: .35rem; }
+.card p { font-size: .94rem; color: var(--ink-soft); }
+.scroll { overflow-x: auto; }
+
+/* chips for ownership */
+.own { display: inline-flex; align-items: center; gap: .35rem; font-family: var(--mono); font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  padding: .12rem .5rem; border-radius: 999px; white-space: nowrap; }
+.own::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.own.det { color: var(--ok); background: var(--ok-wash); }
+.own.ai { color: var(--lens); background: var(--lens-wash); }
+.own.human { color: var(--amber); background: var(--amber-wash); }
+
+/* ------------------------------------------------------------ pipeline explorer */
+.pipe { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.4rem; align-items: start; }
+@media (max-width: 900px) { .pipe { grid-template-columns: 1fr; } }
+.steps { list-style: none; margin: 0; padding: 0; position: relative; }
+.steps::before { content: ""; position: absolute; left: 1.05rem; top: .8rem; bottom: .8rem; width: 2px; background: var(--rule-strong); }
+.steps li { position: relative; }
+.steps li.fork { margin-left: 1.6rem; }
+.steps li.fork::after { content: "parallel"; position: absolute; right: .6rem; top: .75rem; font-family: var(--mono); font-size: .62rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .08em; }
+.step-btn { display: grid; grid-template-columns: 2.1rem minmax(0, 1fr) auto; gap: .7rem; align-items: center; width: 100%; text-align: left; font: inherit; color: var(--ink);
+  background: transparent; border: 1px solid transparent; border-radius: 8px; padding: .45rem .5rem .45rem 0; cursor: pointer; }
+.step-btn:hover { background: var(--sheet); border-color: var(--rule); }
+.step-btn[aria-selected="true"] { background: var(--sheet); border-color: var(--lens); box-shadow: var(--shadow); }
+.step-btn .n { position: relative; z-index: 1; display: grid; place-items: center; width: 2.1rem; height: 2.1rem; border-radius: 50%; background: var(--paper); border: 2px solid var(--ink);
+  font-family: var(--mono); font-size: .78rem; font-weight: 600; }
+.step-btn[aria-selected="true"] .n { background: var(--lens); border-color: var(--lens); color: #fff; }
+.step-btn .name { font-weight: 600; }
+.step-btn .t { font-family: var(--mono); font-size: .72rem; color: var(--ink-faint); }
+.detail { position: sticky; top: 5.5rem; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 10px; padding: 1.3rem 1.4rem; box-shadow: var(--shadow); min-height: 360px; }
+.detail .folio { margin-bottom: .4rem; }
+.detail h3 { font-size: 1.55rem; font-weight: 800; margin-bottom: .6rem; }
+.detail ul { margin: .9rem 0 0; padding-left: 1.1rem; }
+.detail li { margin-bottom: .35rem; }
+.detail .io { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .3rem .8rem; margin-top: 1rem; font-size: .88rem; border-top: 1px dashed var(--rule-strong); padding-top: .8rem; }
+.detail .io dt { font-family: var(--mono); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); padding-top: .15rem; }
+.detail .io dd { margin: 0; }
+
+/* ------------------------------------------------------------ architecture diagram */
+.arch-tools { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .8rem; }
+.toggle { font: inherit; font-size: .88rem; font-weight: 600; cursor: pointer; border-radius: 999px; padding: .45rem 1rem; border: 1.5px solid var(--lens); color: var(--lens); background: transparent; }
+.toggle[aria-pressed="true"] { background: var(--lens); color: #fff; }
+.arch-wrap { background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 10px; padding: .6rem; box-shadow: var(--shadow); }
+svg.arch { display: block; width: 100%; min-width: 860px; height: auto; }
+svg.arch text { font-family: var(--body); fill: var(--ink); }
+svg.arch .band { fill: none; stroke: var(--rule-strong); stroke-dasharray: 5 5; }
+svg.arch .box { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
+svg.arch .box.ai { stroke: var(--lens); stroke-width: 2.2; }
+svg.arch .box.opt { stroke-dasharray: 6 5; }
+svg.arch .chip { fill: var(--sheet); stroke: var(--rule-strong); }
+svg.arch .chip.ai { stroke: var(--lens); }
+svg.arch .title { font-family: var(--display); font-weight: 650; font-size: 15px; }
+svg.arch .sub { font-size: 11.5px; fill: var(--ink-soft); }
+svg.arch .ct { font-size: 11.5px; font-family: var(--mono); }
+svg.arch .role { fill: var(--ink); }
+svg.arch .role-t { fill: var(--paper); font-weight: 600; font-size: 12.5px; }
+svg.arch .edge { stroke: var(--ink-soft); stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+svg.arch .edge.ai { stroke: var(--lens); }
+svg.arch .el { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-soft); }
+svg.arch #arrow path { fill: var(--ink-soft); }
+svg.arch g { transition: opacity .3s ease; }
+svg.arch.ai-only g.det { opacity: .18; }
+
+/* ------------------------------------------------------------ tables */
+table { width: 100%; border-collapse: collapse; font-size: .92rem; min-width: 560px; }
+th { text-align: left; font-family: var(--mono); font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+  padding: .55rem .6rem; border-bottom: 2px solid var(--ink); }
+td { padding: .6rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+td.c { text-align: center; }
+.yes { color: var(--ok); font-weight: 700; }
+.no { color: var(--ink-faint); }
+
+/* ------------------------------------------------------------ reader */
+.reader { display: grid; gap: 1rem; }
+.hdr-line { display: flex; flex-wrap: wrap; gap: .4rem; font-family: var(--mono); font-size: .8rem; }
+.hdr-line span { padding: .35rem .6rem; border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--sheet); }
+.hdr-line span b { display: block; font-size: .62rem; letter-spacing: .06em; text-transform: uppercase; color: var(--lens); }
+.recon { font-family: var(--mono); font-size: .8rem; }
+.recon .r { display: grid; grid-template-columns: 4.8rem 1fr 1fr 1fr 2.2rem; gap: .5rem; padding: .4rem .5rem; border-bottom: 1px dashed var(--rule); }
+.recon .r span:nth-child(n+2):nth-child(-n+4) { text-align: right; }
+.recon .r .ok { color: var(--ok); font-weight: 700; text-align: center; }
+.recon .r .bad { color: var(--stamp); font-weight: 700; text-align: center; }
+.recon .r.h { color: var(--ink-faint); font-size: .66rem; text-transform: uppercase; letter-spacing: .06em; }
+.formula { font-family: var(--mono); font-size: .95rem; background: var(--ink); color: var(--paper); padding: .7rem 1rem; border-radius: 6px; display: inline-block; }
+
+/* ------------------------------------------------------------ rules as stamps */
+.rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .8rem; }
+.rule { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: .8rem .9rem; }
+.rule code { display: inline-block; font-weight: 600; margin-bottom: .3rem; }
+.sev { float: right; font-family: var(--mono); font-size: .64rem; font-weight: 600; padding: .08rem .4rem; border-radius: 3px; border: 1.5px solid currentColor; transform: rotate(-3deg); }
+.sev.crit { color: var(--stamp); }
+.sev.high { color: var(--amber); }
+.sev.med { color: var(--ok); }
+.rule p { font-size: .88rem; color: var(--ink-soft); }
+
+/* ------------------------------------------------------------ hash chain */
+.chain { display: flex; gap: 0; align-items: stretch; overflow-x: auto; padding-bottom: .4rem; }
+.link { flex: 0 0 200px; background: var(--sheet); border: 1.5px solid var(--ink); border-radius: 6px; padding: .7rem .8rem; font-family: var(--mono); font-size: .72rem; }
+.link b { display: block; font-family: var(--body); font-size: .9rem; margin-bottom: .25rem; }
+.link .h { color: var(--lens); word-break: break-all; }
+.link .p { color: var(--ink-faint); word-break: break-all; }
+.join { flex: 0 0 34px; display: grid; place-items: center; color: var(--ink-soft); font-family: var(--mono); }
+.link.verify { border-color: var(--ok); background: var(--ok-wash); }
+
+/* ------------------------------------------------------------ product tour replicas */
+.tour { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.shot { background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.shot .bar { display: flex; gap: .35rem; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+.shot .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--rule-strong); }
+.shot .bar span { margin-left: .5rem; font-family: var(--mono); font-size: .68rem; color: var(--ink-faint); }
+.shot .body { padding: 1rem; }
+.shot figcaption { padding: .6rem 1rem .8rem; font-size: .84rem; color: var(--ink-soft); border-top: 1px dashed var(--rule); }
+.mini-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin-top: .6rem; }
+.mini-kpis div { background: var(--paper); border-radius: 6px; padding: .45rem .6rem; }
+.mini-kpis b { display: block; font-family: var(--display); font-size: 1.15rem; }
+.mini-kpis span { font-size: .7rem; color: var(--ink-soft); }
+.eyebrow { font-family: var(--mono); font-size: .66rem; text-transform: uppercase; letter-spacing: .09em; color: var(--lens); font-weight: 600; }
+.upl { border-left: 4px solid var(--ok); background: var(--paper); border-radius: 6px; padding: .6rem .7rem; font-size: .84rem; margin-top: .5rem; }
+.upl b { display: block; }
+.hi { font-family: "Noto Sans Devanagari", var(--body); }
+.tl { list-style: none; margin: 0; padding: 0; font-size: .84rem; }
+.tl li { display: grid; grid-template-columns: 1.4rem 1fr auto; gap: .5rem; padding: .3rem 0; border-bottom: 1px dashed var(--rule); }
+.tl li i { color: var(--ok); font-style: normal; font-weight: 700; }
+.tl li span:last-child { font-family: var(--mono); font-size: .7rem; color: var(--ink-faint); }
+
+/* ------------------------------------------------------------ numbers */
+.numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; background: var(--rule-strong); border: 1px solid var(--rule-strong); border-radius: 8px; overflow: hidden; }
+.numbers div { background: var(--sheet); padding: 1rem 1.1rem; }
+.numbers b { display: block; font-family: var(--display); font-size: 2rem; font-weight: 800; line-height: 1.05; }
+.numbers span { font-size: .8rem; color: var(--ink-soft); }
+.numbers em { font-style: normal; font-family: var(--mono); font-size: .68rem; color: var(--ok); display: block; margin-top: .2rem; }
+
+/* ------------------------------------------------------------ deployment */
+.deploy { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.lane { background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; }
+.lane ol { margin: .6rem 0 0; padding: 0; list-style: none; counter-reset: s; }
+.lane li { counter-increment: s; display: grid; grid-template-columns: 1.8rem 1fr; gap: .5rem; padding: .35rem 0; border-bottom: 1px dashed var(--rule); font-size: .92rem; }
+.lane li::before { content: counter(s); font-family: var(--mono); font-size: .72rem; font-weight: 600; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1.5px solid var(--ink); }
+.stack { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
+.stack span { font-family: var(--mono); font-size: .76rem; padding: .25rem .6rem; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--sheet); }
+
+.limits li { margin-bottom: .55rem; max-width: 72ch; }
+footer { margin-top: 3rem; padding-top: 1.2rem; border-top: 2px solid var(--ink); display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-size: .82rem; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="topbar">
+    <span class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="3" y="5" width="22" height="28" rx="4" fill="#5b3fd9" opacity=".2"/><path d="M8 12h12M8 17h9M8 22h11M8 27h7" stroke="#5b3fd9" stroke-width="2.4" stroke-linecap="round"/><circle cx="25" cy="21" r="8.5" fill="none" stroke="#0f8a7e" stroke-width="3.2"/><path d="M31.2 27.2 37 33" stroke="#0f8a7e" stroke-width="3.6" stroke-linecap="round"/></svg>
+      LedgerLens
+    </span>
+    <nav aria-label="Sections">
+      <a href="#journey">Journey</a><a href="#architecture">Architecture</a><a href="#reader">Reader</a><a href="#forensics">Forensics</a>
+      <a href="#trust">Trust</a><a href="#tour">Product</a><a href="#numbers">Numbers</a><a href="#deploy">Deploy</a>
+    </nav>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero" aria-labelledby="t-hero">
+    <div>
+      <span class="folio">Technical dossier · MSME working-capital lending · India</span>
+      <h1 id="t-hero">Ledger<span>Lens</span></h1>
+      <p class="tag">See what the statement isn't telling you.</p>
+      <p class="lede">A small business with no credit history has one thing to show a lender: a bank statement, and a statement
+        can be edited in a browser in about a minute. LedgerLens reads the statement, checks the file itself for signs of
+        editing, and gives a credit officer a recommendation in seconds, with a memo in which every sentence cites the row it
+        came from. A person makes every lending decision.</p>
+      <div class="facts">
+        <div class="fact"><b>1.8 s</b><span>from submit to instant recommendation</span></div>
+        <div class="fact"><b>9 + 1</b><span>forensic rules plus an identity check</span></div>
+        <div class="fact"><b>0</b><span>customer bytes sent off-premise with the local model</span></div>
+      </div>
+    </div>
+
+    <figure class="stmt" aria-label="A statement being inspected. The deposit of 1,24,500 on 19 July was typed in later and does not reconcile.">
+      <div class="stmt-head"><span>Northwind Bank · Current a/c XX7891</span><span>page 4 of 6</span></div>
+      <div class="stmt-row hdr"><span>Date</span><span>Narration</span><span>Deposit</span><span>Balance</span></div>
+      <div class="stmt-row"><span>15-07-2026</span><span>UPI/CR/MEHTA STORES</span><span class="amt">18,240.00</span><span class="bal">2,05,480.00</span></div>
+      <div class="stmt-row"><span>17-07-2026</span><span>UPI/DR/AGARWAL WHOLESALE</span><span class="amt"></span><span class="bal">1,87,240.00</span></div>
+      <div class="stmt-row edited"><span>19-07-2026</span><span>NEFT CR/SHARMA MOTORS</span><span class="amt">1,24,500.00</span><span class="bal">3,11,740.00</span></div>
+      <div class="stmt-row"><span>21-07-2026</span><span>NEFT DR/SHOP RENT</span><span class="amt"></span><span class="bal">1,62,240.00</span></div>
+      <div class="stmt-row"><span>24-07-2026</span><span>CASH DEPOSIT · BRANCH</span><span class="amt">40,000.00</span><span class="bal">2,02,240.00</span></div>
+      <svg class="lens" viewBox="0 0 132 132" aria-hidden="true"><circle class="glass" cx="52" cy="52" r="42"/><path d="M84 84 124 124"/></svg>
+      <div class="stamp">FR-BAL-001 · balance breaks<br>FR-FONT-001 · font differs</div>
+    </figure>
+  </section>
+
+  <!-- PRINCIPLE -->
+  <section class="block" id="principle" aria-labelledby="t-principle">
+    <div class="sec-head">
+      <span class="folio">Folio 01</span>
+      <div>
+        <h2 id="t-principle">Deterministic code does correctness. Models do judgement. People decide.</h2>
+        <p>Every boundary in the system follows from that sentence. A model may read, describe and explain. It may not compute
+          an outcome, and it may not put a sentence in front of an underwriter that cannot be checked.</p>
+      </div>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Decision</th><th>Owner</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Reading a statement layout we recognise</td><td><span class="own det">Deterministic</span></td><td>Exact, free, and it proves itself by reconciling every running balance</td></tr>
+          <tr><td>Reading an unfamiliar layout</td><td><span class="own ai">AI model</span></td><td>Schema-constrained extraction; accepted only if balances still reconcile</td></tr>
+          <tr><td>Balance reconciliation, font comparison, file metadata</td><td><span class="own det">Deterministic</span></td><td>Arithmetic must not hallucinate</td></tr>
+          <tr><td>Probability of default, outcome, amount, rate</td><td><span class="own det">Deterministic</span></td><td>Transparent scorecard and versioned YAML policy a regulator can read</td></tr>
+          <tr><td>Challenging the scorecard</td><td><span class="own det">Learned model</span></td><td>Monotonic gradient-boosted challenger; disagreement sends the case to a person</td></tr>
+          <tr><td>Writing the credit memo</td><td><span class="own ai">AI model</span></td><td>Drafts against a fixed evidence bundle and figure whitelist; gated twice</td></tr>
+          <tr><td>Explaining the outcome to the customer</td><td><span class="own ai">AI model</span></td><td>Smooths pre-approved text; any new figure or internal term reverts to the template</td></tr>
+          <tr><td>The lending decision</td><td><span class="own human">Credit officer</span></td><td>Non-negotiable. Four-eyes above ₹5,00,000; a reason for every override</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- JOURNEY -->
+  <section class="block" id="journey" aria-labelledby="t-journey">
+    <div class="sec-head">
+      <span class="folio">Folio 02</span>
+      <div>
+        <h2 id="t-journey">Follow one statement</h2>
+        <p>Pick a step to see what happens to Priya Nair's HDFC-style statement, 160 transactions over seven months, on its way
+          to a decision. Timings are from a production-mode run on a laptop with a local 1B model.</p>
+      </div>
+    </div>
+    <div class="pipe">
+      <ol class="steps" role="tablist" aria-label="Pipeline steps" id="steps"></ol>
+      <div class="detail" id="detail" role="tabpanel" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section class="block" id="architecture" aria-labelledby="t-arch">
+    <div class="sec-head">
+      <span class="folio">Folio 03</span>
+      <div>
+        <h2 id="t-arch">System architecture</h2>
+        <p>One container image with three entry points: the API, the pipeline worker and the migration job. State lives in
+          PostgreSQL, so the API scales freely and a crashed worker's job is picked up by another.</p>
+      </div>
+    </div>
+    <div class="arch-tools">
+      <button class="toggle" id="ai-toggle" aria-pressed="false">Show where AI is allowed</button>
+      <span class="own det">deterministic</span><span class="own ai">model-assisted</span>
+    </div>
+    <div class="arch-wrap scroll">
+      <svg class="arch" id="arch" viewBox="0 0 1120 650" role="img" aria-labelledby="arch-title arch-desc">
+        <title id="arch-title">LedgerLens architecture</title>
+        <desc id="arch-desc">Four roles use a browser app that calls a stateless FastAPI service. The API writes to PostgreSQL and signs receipts. A pipeline worker claims jobs from PostgreSQL and calls models through an LLM gateway: a local Ollama Gemma model by default, or Gemini on Vertex AI.</desc>
+        <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z"/></marker></defs>
+
+        <g class="det">
+          <rect class="band" x="30" y="14" width="1060" height="100" rx="12"/>
+          <text class="sub" x="48" y="36">BROWSER · single-page app · strict CSP · no inline script</text>
+          <rect class="role" x="60" y="50" width="230" height="44" rx="22"/><text class="role-t" x="175" y="77" text-anchor="middle">Customer · self-service</text>
+          <rect class="role" x="310" y="50" width="230" height="44" rx="22"/><text class="role-t" x="425" y="77" text-anchor="middle">Loan officer · assisted</text>
+          <rect class="role" x="560" y="50" width="230" height="44" rx="22"/><text class="role-t" x="675" y="77" text-anchor="middle">Credit officer · sanctions</text>
+          <rect class="role" x="810" y="50" width="250" height="44" rx="22"/><text class="role-t" x="935" y="77" text-anchor="middle">Admin · team, risk, audit</text>
+          <path class="edge" d="M360 114 V148"/><text class="el" x="370" y="136">HTTPS · JSON · SSE progress</text>
+        </g>
+
+        <g class="det">
+          <rect class="box" x="30" y="150" width="660" height="160" rx="12"/>
+          <text class="title" x="48" y="178">API service · FastAPI</text>
+          <text class="sub" x="48" y="197">stateless · N replicas · refuses to boot with unsafe production config</text>
+          <rect class="chip" x="48" y="212" width="200" height="34" rx="8"/><text class="ct" x="148" y="234" text-anchor="middle">Argon2id · revocable</text>
+          <rect class="chip" x="260" y="212" width="200" height="34" rx="8"/><text class="ct" x="360" y="234" text-anchor="middle">Roles &amp; ownership</text>
+          <rect class="chip" x="472" y="212" width="200" height="34" rx="8"/><text class="ct" x="572" y="234" text-anchor="middle">Shared rate limits</text>
+          <rect class="chip" x="48" y="256" width="200" height="34" rx="8"/><text class="ct" x="148" y="278" text-anchor="middle">Origin check · CSP</text>
+          <rect class="chip" x="260" y="256" width="200" height="34" rx="8"/><text class="ct" x="360" y="278" text-anchor="middle">Intake · decrypt · read</text>
+          <rect class="chip" x="472" y="256" width="200" height="34" rx="8"/><text class="ct" x="572" y="278" text-anchor="middle">Decisions · four-eyes</text>
+        </g>
+
+        <g class="det">
+          <rect class="box" x="740" y="150" width="350" height="70" rx="12"/>
+          <text class="title" x="758" y="178">Receipt signer · Ed25519</text>
+          <text class="sub" x="758" y="198">portable, signed record of every decision</text>
+          <rect class="box opt" x="740" y="240" width="350" height="70" rx="12"/>
+          <text class="title" x="758" y="268">Offline verifier</text>
+          <text class="sub" x="758" y="288">tools/verify_receipt.py · imports nothing from the app</text>
+          <path class="edge" d="M690 185 H736"/>
+          <path class="edge" d="M915 220 V236"/>
+        </g>
+
+        <g class="det">
+          <path class="edge" d="M360 310 V346"/><text class="el" x="370" y="333">row-locked writes · audit appends</text>
+          <rect class="box" x="30" y="350" width="660" height="160" rx="12"/>
+          <text class="title" x="48" y="378">PostgreSQL · Cloud SQL</text>
+          <text class="sub" x="48" y="397">SQLite for single-process development · Alembic migrations</text>
+          <rect class="chip" x="48" y="412" width="200" height="34" rx="8"/><text class="ct" x="148" y="434" text-anchor="middle">cases · JSONB</text>
+          <rect class="chip" x="260" y="412" width="200" height="34" rx="8"/><text class="ct" x="360" y="434" text-anchor="middle">document_blobs</text>
+          <rect class="chip" x="472" y="412" width="200" height="34" rx="8"/><text class="ct" x="572" y="434" text-anchor="middle">pipeline_jobs</text>
+          <rect class="chip" x="48" y="456" width="200" height="34" rx="8"/><text class="ct" x="148" y="478" text-anchor="middle">audit_log · append-only</text>
+          <rect class="chip" x="260" y="456" width="200" height="34" rx="8"/><text class="ct" x="360" y="478" text-anchor="middle">users</text>
+          <rect class="chip" x="472" y="456" width="200" height="34" rx="8"/><text class="ct" x="572" y="478" text-anchor="middle">rate_limits</text>
+        </g>
+
+        <g class="det">
+          <rect class="box" x="740" y="350" width="350" height="160" rx="12"/>
+          <text class="title" x="758" y="378">Pipeline worker</text>
+          <text class="sub" x="758" y="397">ADK Workflow graph · drains on SIGTERM</text>
+          <rect class="chip" x="758" y="410" width="314" height="28" rx="8"/><text class="ct" x="915" y="429" text-anchor="middle">claims jobs · FOR UPDATE SKIP LOCKED</text>
+          <rect class="chip" x="758" y="444" width="314" height="28" rx="8"/><text class="ct" x="915" y="463" text-anchor="middle">lease + heartbeat · retry · park</text>
+          <rect class="chip" x="758" y="478" width="314" height="28" rx="8"/><text class="ct" x="915" y="497" text-anchor="middle">retention sweep · hourly</text>
+          <path class="edge" d="M736 440 H694"/><path class="edge" d="M694 420 H736"/>
+          <text class="el" x="700" y="412">jobs</text>
+        </g>
+
+        <g class="ai">
+          <path class="edge ai" d="M915 510 V546"/><text class="el" x="925" y="533">schema-constrained calls</text>
+          <rect class="box ai" x="740" y="550" width="350" height="80" rx="12"/>
+          <text class="title" x="758" y="578">LLM gateway</text>
+          <text class="sub" x="758" y="598">JSON schema · output cap · token budget</text>
+          <text class="sub" x="758" y="615">fallback to deterministic on any failure</text>
+          <path class="edge ai" d="M740 590 H694"/>
+          <rect class="box ai" x="30" y="550" width="320" height="80" rx="12"/>
+          <text class="title" x="48" y="578">Ollama · Gemma</text>
+          <text class="sub" x="48" y="598">local, the default: data never leaves</text>
+          <text class="sub" x="48" y="615">gemma3:1b today · 4b recommended</text>
+          <rect class="box ai opt" x="370" y="550" width="320" height="80" rx="12"/>
+          <text class="title" x="388" y="578">Gemini · Vertex AI</text>
+          <text class="sub" x="388" y="598">optional cloud provider</text>
+          <text class="sub" x="388" y="615">service-account auth, no API keys</text>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ROLES -->
+  <section class="block" id="roles" aria-labelledby="t-roles">
+    <div class="sec-head">
+      <span class="folio">Folio 04</span>
+      <div>
+        <h2 id="t-roles">Four roles, one rule about who sees what</h2>
+        <p>Customers see their own applications and never an internal score. Loan officers see the applications they sourced.
+          Credit officers and admins see the whole queue. Anything a role may not reach answers 404, so existence never leaks.</p>
+      </div>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Can…</th><th class="c">Customer</th><th class="c">Loan officer</th><th class="c">Credit officer</th><th class="c">Admin</th></tr></thead>
+        <tbody>
+          <tr><td>Enter KYC details and upload statements</td><td class="c yes">●</td><td class="c yes">●</td><td class="c no">○</td><td class="c no">○</td></tr>
+          <tr><td>See the instant recommendation, band and findings</td><td class="c no">○</td><td class="c yes">● own</td><td class="c yes">●</td><td class="c yes">●</td></tr>
+          <tr><td>Open the evidence viewer and memo</td><td class="c no">○</td><td class="c yes">● own</td><td class="c yes">●</td><td class="c yes">●</td></tr>
+          <tr><td>Ask the case co-pilot</td><td class="c no">○</td><td class="c no">○</td><td class="c yes">●</td><td class="c yes">●</td></tr>
+          <tr><td>Record or countersign a decision</td><td class="c no">○</td><td class="c no">○</td><td class="c yes">●</td><td class="c no">○</td></tr>
+          <tr><td>Read the outcome and explanation, get a signed receipt</td><td class="c yes">●</td><td class="c yes">● own</td><td class="c yes">●</td><td class="c yes">●</td></tr>
+          <tr><td>Manage the team, see risk and the audit chain</td><td class="c no">○</td><td class="c no">○</td><td class="c no">○</td><td class="c yes">●</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- READER -->
+  <section class="block" id="reader" aria-labelledby="t-reader">
+    <div class="sec-head">
+      <span class="folio">Folio 05</span>
+      <div>
+        <h2 id="t-reader">A reader that proves its own reading</h2>
+        <p>Indian statements come in dozens of layouts. The universal reader finds the table from its header words, assigns
+          each word to a column by position, rejoins wrapped narrations, and reverses newest-first statements. Then it checks
+          itself: a reading is trusted only if the running balance reconciles row by row.</p>
+      </div>
+    </div>
+    <div class="reader">
+      <div class="card">
+        <h3>Header words become column roles</h3>
+        <div class="hdr-line" aria-label="Header mapping example">
+          <span><b>date</b>Txn Date</span><span><b>value date · ignored</b>Value Date</span><span><b>narration</b>Description</span>
+          <span><b>reference</b>Ref No./Cheque No.</span><span><b>debit</b>Debit</span><span><b>credit</b>Credit</span><span><b>balance</b>Balance</span>
+        </div>
+        <p class="muted" style="margin-top:.7rem;color:var(--ink-soft);font-size:.9rem">Also handled: Withdrawal Amt. / Deposit Amt., a single Amount column with Dr/Cr, balances suffixed <code>(Cr)</code>,
+          dates as <code>01/04/26</code>, <code>1 Apr 2026</code>, <code>01-Apr-2026</code>, and two-line headers such as "Withdrawal / (INR)".</p>
+      </div>
+      <div class="cols">
+        <div class="card">
+          <h3>The self-check</h3>
+          <p style="margin:.4rem 0 .8rem">Each row must satisfy</p>
+          <span class="formula">prev balance + credit − debit = balance</span>
+          <p style="margin-top:.8rem">One or two breaks are exactly what forensics exists to find, so the file is accepted and flagged.
+            Many breaks mean the layout was misread, so the file goes to the model or a person instead of being scored wrongly.</p>
+        </div>
+        <div class="card recon" aria-label="Reconciliation example">
+          <div class="r h"><span>Date</span><span>Credit</span><span>Debit</span><span>Balance</span><span></span></div>
+          <div class="r"><span>15-07</span><span>18,240.00</span><span></span><span>2,05,480.00</span><span class="ok">✓</span></div>
+          <div class="r"><span>17-07</span><span></span><span>18,240.00</span><span>1,87,240.00</span><span class="ok">✓</span></div>
+          <div class="r"><span>19-07</span><span>1,24,500.00</span><span></span><span>3,11,740.00</span><span class="ok">✓</span></div>
+          <div class="r"><span>21-07</span><span></span><span>25,000.00</span><span>1,62,240.00</span><span class="bad">✗</span></div>
+          <p style="margin-top:.6rem;font-family:var(--body);font-size:.84rem;color:var(--ink-soft)">3,11,740 − 25,000 should be 2,86,740. The bank's own balance is 1,62,240: the deposit above was typed in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FORENSICS -->
+  <section class="block" id="forensics" aria-labelledby="t-forensics">
+    <div class="sec-head">
+      <span class="folio">Folio 06</span>
+      <div>
+        <h2 id="t-forensics">Nine rules and an identity check</h2>
+        <p>They interrogate the file as an artefact rather than reading it as a document. Each emits evidence IDs that resolve to
+          a box on a page. A serious finding sends the case to integrity review; nothing here ever declines anyone, and the
+          customer never hears the word fraud.</p>
+      </div>
+    </div>
+    <div class="rules">
+      <div class="rule"><span class="sev crit">CRITICAL</span><code>FR-BAL-001</code><p>Running balance does not reconcile, re-anchored per row so one edit is one break.</p></div>
+      <div class="rule"><span class="sev crit">CRITICAL</span><code>FR-FONT-001</code><p>An amount cell set in a different font or size from the rest of its column.</p></div>
+      <div class="rule"><span class="sev high">HIGH</span><code>FR-META-001</code><p>Producer names an editor, incremental re-saves, modified after issue. Per-bank producer profiles.</p></div>
+      <div class="rule"><span class="sev high">HIGH</span><code>FR-INJ-001</code><p>Narration text addressed to an automated reviewer, redacted before any model sees it.</p></div>
+      <div class="rule"><span class="sev high">HIGH</span><code>FR-TXN-004</code><p>Dates out of sequence or outside the printed statement period.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-STAT-001</code><p>Deposits far outside the account's own distribution, compared within category.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-TXN-001</code><p>Repeated bank reference numbers.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-TXN-002</code><p>Round-figure cash deposits in the final 15 days before applying.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>FR-TXN-003</code><p>Money received from and returned to one counterparty within days.</p></div>
+      <div class="rule"><span class="sev med">MEDIUM</span><code>ID-NAME-001</code><p>Statement belongs to someone other than the applicant or their business. Triggers verification, not decline.</p></div>
+    </div>
+  </section>
+
+  <!-- TRUST -->
+  <section class="block" id="trust" aria-labelledby="t-trust">
+    <div class="sec-head">
+      <span class="folio">Folio 07</span>
+      <div>
+        <h2 id="t-trust">Nothing is taken on trust</h2>
+        <p>Uploaded documents and model outputs are both treated as untrusted. The audit log is hash-chained and append-only
+          inside the database itself, and the risk console recomputes the chain on every load.</p>
+      </div>
+    </div>
+    <div class="chain" aria-label="Hash-chained audit log example">
+      <div class="link"><b>#41 SUBMIT_CASE</b><span class="p">prev 7c1e…a02f</span><br><span class="h">hash 9b3d…41c8</span></div>
+      <div class="join" aria-hidden="true">→</div>
+      <div class="link"><b>#42 DECISION_PROPOSED</b><span class="p">prev 9b3d…41c8</span><br><span class="h">hash e0f7…77b1</span></div>
+      <div class="join" aria-hidden="true">→</div>
+      <div class="link"><b>#43 DECISION_RECORDED</b><span class="p">prev e0f7…77b1</span><br><span class="h">hash 1aa9…c35e</span></div>
+      <div class="join" aria-hidden="true">→</div>
+      <div class="link"><b>#44 RECEIPT_ISSUED</b><span class="p">prev 1aa9…c35e</span><br><span class="h">hash 5f20…d914</span></div>
+      <div class="join" aria-hidden="true">→</div>
+      <div class="link verify"><b>Chain verified ✓</b>Changing any past row breaks every hash after it. UPDATE and DELETE are refused by a trigger.</div>
+    </div>
+    <div class="cols" style="margin-top:1.2rem">
+      <div class="card"><h3>Accounts</h3><p>Argon2id passwords, lockout after repeated failures, sign-in limits per email and address, sessions revoked on sign-out, password change or disable.</p></div>
+      <div class="card"><h3>Customer data</h3><p>Aadhaar is never collected. PAN is masked in lists and absent from receipts. PII is masked before any model sees text. Statement passwords are used once and discarded.</p></div>
+      <div class="card"><h3>Documents</h3><p>Magic-byte, active-content and page checks, repeated after decryption. Pages render server-side, so the browser never parses an untrusted PDF.</p></div>
+      <div class="card"><h3>Models</h3><p>Figure whitelist, citation resolution, a deterministic critic, a groundedness gate and a quality gate. Removed claims are counted on screen, never hidden.</p></div>
+      <div class="card"><h3>Web</h3><p>Strict CSP with no inline script, Origin checks on writes, SameSite=strict cookies, HSTS in production, a request ID instead of a stack trace.</p></div>
+      <div class="card"><h3>Operations</h3><p>Production refuses to start with a weak secret, demo mode, no database, an ephemeral receipt key or an in-process pipeline.</p></div>
+    </div>
+  </section>
+
+  <!-- PRODUCT TOUR -->
+  <section class="block" id="tour" aria-labelledby="t-tour">
+    <div class="sec-head">
+      <span class="folio">Folio 08</span>
+      <div>
+        <h2 id="t-tour">What each person sees</h2>
+        <p>Recreations of three moments from the product, using text and timings recorded in the verification runs.</p>
+      </div>
+    </div>
+    <div class="tour">
+      <figure class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>customer · upload</span></div>
+        <div class="body">
+          <span class="eyebrow">Bank statements</span>
+          <div class="upl"><b>HDFC-statement-Apr-Nov.pdf ✓</b>Northwind Bank · PRIYA NAIR · A/c XX7891 · 02 Apr 2026 – 03 Nov 2026 · 160 transactions read</div>
+          <div class="upl"><b>password protected</b>Opened with the PDF password, which is never stored.</div>
+        </div>
+        <figcaption>Each statement is read the moment it lands, so a wrong file is caught before submission.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>loan officer · instant result</span></div>
+        <div class="body">
+          <span class="eyebrow">Instant recommendation</span>
+          <h3 style="font-size:1.4rem;margin:.3rem 0">Refer to a credit officer</h3>
+          <div class="mini-kpis">
+            <div><b>Band C</b><span>transparent scorecard</span></div>
+            <div><b>1.8 s</b><span>after submit</span></div>
+            <div><b>24 months</b><span>tenure</span></div>
+            <div><b>ID-NAME-001</b><span>statement in another name</span></div>
+          </div>
+        </div>
+        <figcaption>The recommendation is final when the risk engine finishes; the memo follows while the officer reads.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="bar"><i></i><i></i><i></i><span>customer · outcome in Hindi</span></div>
+        <div class="body">
+          <span class="eyebrow">Decision recorded by a person</span>
+          <p class="hi" style="margin:.4rem 0 .6rem;font-weight:600" lang="hi">खुशखबरी: 24 महीनों के लिए ₹2,00,000 का आपका लोन मंज़ूर हो गया है।</p>
+          <ul class="tl">
+            <li><i>✓</i><span>Reading the statements</span><span>322 ms</span></li>
+            <li><i>✓</i><span>Scoring and applying credit policy</span><span>1,157 ms</span></li>
+            <li><i>✓</i><span>Signed receipt issued</span><span>Ed25519</span></li>
+          </ul>
+        </div>
+        <figcaption>English, Hindi and Indonesian, assembled from approved text so no model can invent a reason.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- NUMBERS -->
+  <section class="block" id="numbers" aria-labelledby="t-numbers">
+    <div class="sec-head">
+      <span class="folio">Folio 09</span>
+      <div>
+        <h2 id="t-numbers">Measured, with the caveats attached</h2>
+        <p>The evaluation population is synthetic, so these numbers show the wiring is correct, not accuracy on real documents.
+          The gates run in Cloud Build: a regression fails the deploy.</p>
+      </div>
+    </div>
+    <div class="numbers">
+      <div><b>133</b><span>automated tests</span><em>pass on SQLite and PostgreSQL</em></div>
+      <div><b>70/70</b><span>rows read exactly, per layout</span><em>4 bank-style layouts</em></div>
+      <div><b>1.00</b><span>tampering recall</span><em>gate ≥ 0.90</em></div>
+      <div><b>0.00</b><span>false positives on clean files</span><em>gate ≤ 0.05</em></div>
+      <div><b>+0.079</b><span>Gini uplift of the challenger</span><em>calibration error 0.025</em></div>
+      <div><b>22/22</b><span>production smoke checks</span><em>Postgres · worker · Ollama</em></div>
+    </div>
+  </section>
+
+  <!-- DEPLOY -->
+  <section class="block" id="deploy" aria-labelledby="t-deploy">
+    <div class="sec-head">
+      <span class="folio">Folio 10</span>
+      <div>
+        <h2 id="t-deploy">Running it</h2>
+        <p>The same image runs on a laptop, a branch server or Google Cloud.</p>
+      </div>
+    </div>
+    <div class="deploy">
+      <div class="lane">
+        <h3>On-premise · Docker Compose</h3>
+        <ol>
+          <li><span>PostgreSQL 17 with a persistent volume</span></li>
+          <li><span>Migration job runs <code>alembic upgrade head</code></span></li>
+          <li><span>API on :8080, stateless</span></li>
+          <li><span>Pipeline worker, drains on SIGTERM</span></li>
+          <li><span>Ollama serving Gemma, so no data leaves the building</span></li>
+        </ol>
+      </div>
+      <div class="lane">
+        <h3>Google Cloud · Cloud Build</h3>
+        <ol>
+          <li><span>Tests, then the forensic evaluation gates</span></li>
+          <li><span>Image to Artifact Registry</span></li>
+          <li><span>Migration as a Cloud Run job against Cloud SQL</span></li>
+          <li><span>API on Cloud Run with secrets from Secret Manager</span></li>
+          <li><span>Worker on Cloud Run, internal ingress, CPU always on</span></li>
+        </ol>
+      </div>
+    </div>
+    <div class="stack" aria-label="Technology">
+      <span>Python 3.12</span><span>FastAPI</span><span>SQLAlchemy 2 Core</span><span>PostgreSQL</span><span>Alembic</span><span>Google ADK Workflow</span>
+      <span>Ollama · Gemma</span><span>Gemini · Vertex AI</span><span>pdfplumber · pypdf · PDFium</span><span>scikit-learn</span><span>Argon2id</span>
+      <span>Ed25519</span><span>Vanilla JS · strict CSP</span><span>Docker · Cloud Run</span>
+    </div>
+  </section>
+
+  <!-- LIMITS -->
+  <section class="block" id="limits" aria-labelledby="t-limits">
+    <div class="sec-head">
+      <span class="folio">Folio 11</span>
+      <div>
+        <h2 id="t-limits">Before real money moves</h2>
+        <p>What is built is production-shaped. These are the gaps to close before customers use it.</p>
+      </div>
+    </div>
+    <ul class="limits">
+      <li><b>Real statements.</b> The universal reader is tested on layouts that imitate four banks. Run it over consented real statements from every bank you lend against.</li>
+      <li><b>Identity.</b> PAN, GSTIN and Udyam are format- and checksum-validated only. Connect NSDL, GSTN and Udyam verification, e-KYC/CKYC and an Account Aggregator fetch, which removes the tampering question at source.</li>
+      <li><b>Model size.</b> gemma3:1b drafts usually fail the memo quality gate, so the deterministic memo is used. Use gemma3:4b or larger, and a vision model for scans.</li>
+      <li><b>Credit model.</b> Scorecard weights are hand-set and the challenger is trained on simulated outcomes. Refit on repayment data and test disparate impact by segment.</li>
+      <li><b>Access and regulation.</b> Add MFA or SSO for staff, and review against RBI's digital lending directions, KFS requirements and the DPDP Act.</li>
+    </ul>
+    <footer>
+      <span>LedgerLens · technical dossier · 27 September 2026</span>
+      <span>A person sanctions every loan.</span>
+    </footer>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var STEPS = [
+    { n: "01", name: "Upload and intake", own: "det", t: "0.3 s", fork: false,
+      what: "The customer or loan officer drops the PDF. A password-protected statement is opened with the password they type, which is used once and never stored.",
+      points: ["Magic bytes, size and page count checked; active content refused, and checked again after decryption",
+               "Original file's hash and metadata captured before decryption, for forensics and the receipt",
+               "The statement is read immediately and the uploader sees bank, holder, account, period and row count"],
+      inp: "PDF, optional password", out: "Stored document and an instant reading preview" },
+    { n: "02", name: "Read the statement", own: "det", t: "322 ms", fork: false,
+      what: "The template reader handles the known layout exactly. Anything else goes to the universal reader, which finds the columns from header words and reconciles every balance.",
+      points: ["Wrapped narrations rejoined; newest-first statements reversed; Dr/Cr markers understood",
+               "Every row becomes an evidence record with a page and a bounding box",
+               "If the balances do not reconcile, the AI model tries, and its reading must reconcile too"],
+      inp: "Decrypted PDF", out: "160 transactions, header fields, evidence boxes, font metrics" },
+    { n: "03", name: "Screen for hidden instructions", own: "det", t: "1 ms", fork: false,
+      what: "Narration text addressed to an automated reviewer is detected, redacted before any model call, and reported as a finding rather than silently dropped.",
+      points: ["NFKC normalisation and seven pattern families", "Optional Google Model Armor as a managed second layer", "No agent holds a tool that changes anything, so there is nothing to actuate"],
+      inp: "Narrations", out: "Redaction flags" },
+    { n: "04", name: "Categorise transactions", own: "det", t: "0 ms", fork: false,
+      what: "Rules categorise most rows into 18 classes. The model is asked only when rules leave at least 20% uncategorised, with a six-second budget, because categories feed the score.",
+      points: ["142 of 160 rows categorised by rules in this run", "Model skipped: rules were sufficient", "Low-confidence model labels are ignored"],
+      inp: "Transactions", out: "Categories such as UPI business credit, cash deposit, EMI" },
+    { n: "05a", name: "Forensic checks", own: "det", t: "8 ms", fork: true,
+      what: "Nine rules and an identity check interrogate the file. With a vision model configured, suspicious cells are cropped and inspected too, but vision can only corroborate.",
+      points: ["Balance breaks, font changes, editing traces, date anomalies, duplicate references", "Statistical outliers catch forgers who repaired every balance", "Statement in another person's name triggers verification"],
+      inp: "Transactions, fonts, metadata, applicant", out: "Findings with evidence IDs" },
+    { n: "05b", name: "Cash-flow analysis", own: "det", t: "6 ms", fork: true,
+      what: "Fifteen features describe the business: inflow level and trend, volatility, balance buffer, cash share, existing instalments and more.",
+      points: ["Monthly aggregates for the underwriter's chart", "Computed evidence records for every figure the memo may quote"],
+      inp: "Categorised transactions", out: "Feature vector and monthly summary" },
+    { n: "06", name: "Score and apply policy", own: "det", t: "1.2 s", fork: false,
+      what: "The transparent scorecard sets the probability of default and band. A monotonic gradient-boosted model challenges it. Versioned YAML policy sets outcome, amount and rate.",
+      points: ["This is the instant recommendation: published to the officer here, about 1.8 s after submit",
+               "Models two bands apart send the case to a person", "Serious integrity findings refer, never decline"],
+      inp: "Features and findings", out: "Outcome, amount, EMI, rate, band, reasons" },
+    { n: "07", name: "Look for a structure that works", own: "det", t: "2 ms", fork: false,
+      what: "For anything short of an approval, a search over amount and tenure replays each candidate through the unmodified policy engine.",
+      points: ["Only offers structures policy actually approves", "Says plainly when the band, not the size, is the blocker"],
+      inp: "Case and policy", out: "Viable alternatives, or the blocking clause" },
+    { n: "08", name: "Write and review the memo", own: "ai", t: "~40 s", fork: false,
+      what: "The model drafts from a masked evidence bundle and a whitelist of pre-computed figures. A deterministic critic and a groundedness gate remove anything unsupported; a quality gate rejects thin or repetitive drafts.",
+      points: ["Every surviving sentence cites evidence IDs that resolve to a row", "Removed claims are counted and shown to the underwriter",
+               "In this run the 1B model's draft failed the quality gate, so the deterministic memo was used, with a note saying why"],
+      inp: "Evidence bundle", out: "Cited credit memo" },
+    { n: "09", name: "Credit officer decides", own: "human", t: "a person", fork: false,
+      what: "The case appears in the credit queue with the evidence viewer beside the memo. Clicking a citation marks the exact cell on the rendered page.",
+      points: ["A reason is required to depart from the recommendation", "Approvals above ₹5,00,000 need a second credit officer", "A loan officer can see the result but cannot sanction"],
+      inp: "Analysis", out: "Recorded decision in the audit chain" },
+    { n: "10", name: "Explain and issue a receipt", own: "ai", t: "instant", fork: false,
+      what: "The customer is told the outcome in their language from approved text. They can download a receipt signed with Ed25519 that anyone can verify offline.",
+      points: ["If a model adds a figure or leaks an internal term, the template version is shown", "The receipt holds document digests, never transactions or account numbers",
+               "It records the model versions in force and whether a person overrode the recommendation"],
+      inp: "Decision", out: "Explanation and portable signed receipt" }
+  ];
+  var OWN = { det: "Deterministic", ai: "AI model, gated", human: "Person" };
+  var list = document.getElementById("steps");
+  var panel = document.getElementById("detail");
+
+  function text(tag, cls, value) { var n = document.createElement(tag); if (cls) n.className = cls; if (value != null) n.textContent = value; return n; }
+
+  function render(i) {
+    var s = STEPS[i];
+    panel.innerHTML = "";
+    panel.appendChild(text("div", "folio", "Step " + s.n + " · " + s.t));
+    panel.appendChild(text("h3", null, s.name));
+    panel.appendChild(text("span", "own " + s.own, OWN[s.own]));
+    var p = text("p", null, s.what); p.style.marginTop = ".8rem"; panel.appendChild(p);
+    var ul = document.createElement("ul");
+    s.points.forEach(function (x) { ul.appendChild(text("li", null, x)); });
+    panel.appendChild(ul);
+    var dl = document.createElement("dl"); dl.className = "io";
+    dl.appendChild(text("dt", null, "Input")); dl.appendChild(text("dd", null, s.inp));
+    dl.appendChild(text("dt", null, "Output")); dl.appendChild(text("dd", null, s.out));
+    panel.appendChild(dl);
+    Array.prototype.forEach.call(list.querySelectorAll(".step-btn"), function (b, j) {
+      b.setAttribute("aria-selected", String(j === i)); b.tabIndex = j === i ? 0 : -1;
+    });
+  }
+
+  STEPS.forEach(function (s, i) {
+    var li = document.createElement("li");
+    if (s.fork) li.className = "fork";
+    var b = document.createElement("button");
+    b.className = "step-btn"; b.type = "button"; b.setAttribute("role", "tab"); b.id = "step-" + i;
+    b.appendChild(text("span", "n", s.n));
+    var mid = document.createElement("span");
+    mid.appendChild(text("span", "name", s.name));
+    mid.appendChild(document.createElement("br"));
+    mid.appendChild(text("span", "own " + s.own, OWN[s.own]));
+    b.appendChild(mid);
+    b.appendChild(text("span", "t", s.t));
+    b.addEventListener("click", function () { render(i); });
+    b.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        var k = (i + (e.key === "ArrowDown" ? 1 : STEPS.length - 1)) % STEPS.length;
+        render(k); document.getElementById("step-" + k).focus();
+      }
+    });
+    li.appendChild(b);
+    list.appendChild(li);
+  });
+  render(6);
+
+  var toggle = document.getElementById("ai-toggle");
+  var arch = document.getElementById("arch");
+  toggle.addEventListener("click", function () {
+    var on = toggle.getAttribute("aria-pressed") !== "true";
+    toggle.setAttribute("aria-pressed", String(on));
+    toggle.textContent = on ? "Show the whole system" : "Show where AI is allowed";
+    arch.classList.toggle("ai-only", on);
+  });
+})();
+</script>
+</body>
+</html>
