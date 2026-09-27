@@ -12,3 +12,13 @@ reportlab==4.4.10
 google-genai==2.23.0
 google-adk==2.9.0
 google-cloud-modelarmor==0.7.1
+cryptography==50.0.1
+SQLAlchemy==2.1.1
+psycopg[binary]==3.3.6
+alembic==1.20.0
+argon2-cffi==25.1.0
+# The learned challenger model (app/risk/ml_model.py). Pinned to the version the artifact was
+# trained with: without these the challenger and POL-MODEL-CHALLENGE silently switch off.
+scikit-learn==1.8.0
+numpy==2.5.3
+joblib==1.6.0

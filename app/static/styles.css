@@ -116,7 +116,13 @@ input, select, textarea {
 @media (max-width: 900px) { .gate { grid-template-columns: 1fr; } }
 .gate h1 { max-width: 15ch; }
 
-.roles { margin-top: 1.6rem; border-top: 1px solid var(--ink); }
+.auth { margin-top: 1.6rem; padding: 1rem 1.1rem 1.1rem; display: grid; gap: .7rem; max-width: 30rem; }
+.auth .field label { display: block; font-size: .86rem; color: var(--ink-soft); margin-bottom: .2rem; }
+.auth .actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.auth .switch { background: none; border: none; color: var(--stamp); padding: 0; text-decoration: underline; }
+.demo-title { margin-top: 1.8rem; font-size: 1rem; }
+.roles { margin-top: .6rem; border-top: 1px solid var(--ink); }
+.file-list { margin: .3rem 0 0; padding-left: 1.1rem; font-size: .86rem; color: var(--ink-soft); }
 .role-btn {
   display: grid;
   grid-template-columns: 1.9rem 1fr auto;

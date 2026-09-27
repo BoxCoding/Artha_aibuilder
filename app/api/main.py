@@ -392,8 +392,11 @@ async def page_image(case_id: str, doc_id: str, page: int,
     case = store.get(case_id)
     if page < 1 or page > 200 or not any(d.doc_id == doc_id for d in case.documents):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.")
-    data = store.get_file(case_id, doc_id)
-    png = await asyncio.to_thread(render_page_png, data, page)
+    data = await asyncio.to_thread(store.get_file, case_id, doc_id)
+    try:
+        png = await asyncio.to_thread(render_page_png, data, page)
+    except IndexError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.") from exc
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
 
 
@@ -405,7 +408,7 @@ async def evidence_crop(case_id: str, evidence_id: str,
     evidence = case.evidence.get(evidence_id)
     if not evidence or not evidence.bbox:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found.")
-    data = store.get_file(case_id, evidence.doc_id)
+    data = await asyncio.to_thread(store.get_file, case_id, evidence.doc_id)
     png = await asyncio.to_thread(render_crop, data, evidence.page, evidence.bbox)
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
 

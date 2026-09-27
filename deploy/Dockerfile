@@ -1,24 +1,37 @@
 # Build: docker build -f deploy/Dockerfile -t artha .
-FROM python:3.12-slim AS base
+# One image, three entry points:
+#   API      (default)  uvicorn app.api.main:app
+#   worker              python -m app.worker
+#   migrate             alembic upgrade head
+FROM python:3.12-slim AS build
+
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /build
+COPY requirements.txt ./
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PATH=/opt/venv/bin:$PATH \
+    PORT=8080
 
 WORKDIR /srv
-
-# Dependencies first so application edits do not invalidate the layer.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
+COPY --from=build /opt/venv /opt/venv
 COPY app ./app
+COPY migrations ./migrations
+COPY alembic.ini ./
+COPY tools ./tools
 
-# Run unprivileged; Cloud Run gives the container a read-only-friendly filesystem anyway.
-RUN useradd --create-home --uid 10001 artha && chown -R artha:artha /srv
+# Run unprivileged, with nothing writable in the application tree.
+RUN useradd --create-home --uid 10001 artha
 USER artha
 
 EXPOSE 8080
-ENV PORT=8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
+  CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/api/healthz', timeout=2)" || exit 1
 
-# One worker per instance keeps the in-memory store coherent; scale with instances, not workers.
-CMD exec uvicorn app.api.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-keep-alive 75
+# State lives in PostgreSQL, so the API scales with workers and instances alike.
+CMD exec uvicorn app.api.main:app --host 0.0.0.0 --port ${PORT} --workers ${WEB_CONCURRENCY:-2} \
+    --timeout-keep-alive 75 --proxy-headers --forwarded-allow-ips="*"

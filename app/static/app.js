@@ -2,7 +2,7 @@
    Text is built with textContent, never innerHTML, so document content can never become markup. */
 
 const $ = (id) => document.getElementById(id);
-const state = { me: null, caseId: null, caseData: null, tab: "memo", docId: null, pages: new Map(), lang: "en" };
+const state = { me: null, config: null, authMode: "signin", caseId: null, caseData: null, tab: "memo", docId: null, pages: new Map(), lang: "en" };
 
 const COPY = {
   en: { ask: ["Why this decision?", "What can I improve?", "What will I repay?", "I want to speak to someone"],
@@ -46,6 +46,11 @@ function clear(node) { while (node.firstChild) node.removeChild(node.firstChild)
 
 async function boot() {
   try {
+    state.config = await api("/api/config");
+  } catch {
+    state.config = { demo_mode: false, registration: false, password_min_length: 12, demo_users: [] };
+  }
+  try {
     state.me = await api("/api/me");
     afterSignIn();
   } catch {
@@ -55,25 +60,89 @@ async function boot() {
 
 function renderGate() {
   show("gate");
+  renderAuthForm();
+  const demoBlock = $("demo-block");
   const roles = $("roles");
   clear(roles);
-  const demo = [
-    ["meena@demo.artha", "Meena Devi", "Borrower — applies, and hears the outcome in her own language"],
-    ["arun@demo.artha", "Arun Prakash", "Underwriter — reviews the evidence and decides"],
-    ["divya@demo.artha", "Divya Menon", "Second underwriter — countersigns large approvals"],
-    ["risk@demo.artha", "Risk Console", "Risk and assurance — model behaviour and the audit trail"],
-  ];
-  demo.forEach(([email, name, blurb]) => {
+  const blurbs = {
+    "meena@demo.artha": "Borrower — applies, and hears the outcome in her own language",
+    "arun@demo.artha": "Underwriter — reviews the evidence and decides",
+    "divya@demo.artha": "Second underwriter — countersigns large approvals",
+    "risk@demo.artha": "Risk and assurance — model behaviour and the audit trail",
+  };
+  const demo = state.config?.demo_mode ? state.config.demo_users : [];
+  demoBlock.classList.toggle("hidden", demo.length === 0);
+  demo.forEach(({ email, name, role }) => {
     const button = el("button", "role-btn");
+    button.type = "button";
     const body = el("span");
     body.appendChild(el("b", null, name));
     body.appendChild(document.createElement("br"));
-    body.appendChild(el("span", "small muted", blurb));
+    body.appendChild(el("span", "small muted", blurbs[email] || role));
     button.append(el("span", "role-initial", name[0]), body, el("span", "role-go", "open"));
-    button.addEventListener("click", () => signIn(email));
+    button.addEventListener("click", () => signIn({ email }));
     roles.appendChild(button);
   });
   renderSpecimen();
+}
+
+function renderAuthForm() {
+  const form = $("auth");
+  clear(form);
+  const registering = state.authMode === "register";
+  const field = (label, type, id, autocomplete) => {
+    const wrap = el("div", "field");
+    const input = el("input");
+    input.type = type; input.id = id; input.required = true; input.autocomplete = autocomplete;
+    const lab = el("label", null, label);
+    lab.htmlFor = id;
+    wrap.append(lab, input);
+    form.appendChild(wrap);
+    return input;
+  };
+  form.appendChild(el("h2", null, registering ? "Create a borrower account" : "Sign in"));
+  const name = registering ? field("Your name", "text", "a-name", "name") : null;
+  const email = field("Email", "email", "a-email", "username");
+  const password = field("Password", "password", "a-password", registering ? "new-password" : "current-password");
+  if (registering) {
+    password.minLength = state.config?.password_min_length || 12;
+    form.appendChild(el("p", "small muted", `At least ${password.minLength} characters. A short phrase works well.`));
+  }
+  const actions = el("div", "actions");
+  const submit = el("button", "stamp", registering ? "Create account" : "Sign in");
+  submit.type = "submit";
+  actions.appendChild(submit);
+  if (state.config?.registration) {
+    const toggle = el("button", "switch", registering ? "I already have an account" : "New here? Create an account");
+    toggle.type = "button";
+    toggle.addEventListener("click", () => {
+      state.authMode = registering ? "signin" : "register";
+      $("gate-note").textContent = "";
+      renderAuthForm();
+    });
+    actions.appendChild(toggle);
+  }
+  form.appendChild(actions);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {
+      if (registering) await register(name.value.trim(), email.value.trim(), password.value);
+      else await signIn({ email: email.value.trim(), password: password.value });
+    } finally {
+      submit.disabled = false;
+      password.value = "";
+    }
+  };
+}
+
+async function register(name, email, password) {
+  try {
+    await api("/api/register", { method: "POST", body: JSON.stringify({ name, email, password }) });
+    state.me = await api("/api/me");
+    $("gate-note").textContent = "";
+    afterSignIn();
+  } catch (error) { $("gate-note").textContent = error.message; }
 }
 
 /* The hero is a fragment of the thing the product actually reads: a statement where one deposit
@@ -106,10 +175,11 @@ function renderSpecimen() {
   host.appendChild(el("p", "spec-caption", "Synthetic statement. No real account, bank or person is shown anywhere in this prototype."));
 }
 
-async function signIn(email) {
+async function signIn(credentials) {
   try {
-    await api("/api/session", { method: "POST", body: JSON.stringify({ email }) });
+    await api("/api/session", { method: "POST", body: JSON.stringify(credentials) });
     state.me = await api("/api/me");
+    $("gate-note").textContent = "";
     afterSignIn();
   } catch (error) { $("gate-note").textContent = error.message; }
 }
@@ -135,7 +205,10 @@ function renderNav() {
   });
   nav.appendChild(el("span", "small muted", `${state.me.name} · ${state.me.ai_mode} mode`));
   const out = el("button", "ghost", "Sign out");
-  out.addEventListener("click", async () => { await api("/api/session", { method: "DELETE" }); state.me = null; renderGate(); renderNav(); });
+  out.addEventListener("click", async () => {
+    try { await api("/api/session", { method: "DELETE" }); } catch { /* signing out locally regardless */ }
+    state.me = null; renderGate(); renderNav();
+  });
   nav.appendChild(out);
 }
 
@@ -153,7 +226,8 @@ function renderApply() {
     field.append(lab, control);
     fields.appendChild(field);
   };
-  const name = el("input"); name.id = "f-name"; name.value = "Meena's Home Kitchen"; name.maxLength = 80;
+  const name = el("input"); name.id = "f-name"; name.maxLength = 80;
+  if (state.config?.demo_mode) name.value = "Meena's Home Kitchen";
   const amount = el("input"); amount.id = "f-amount"; amount.type = "number"; amount.value = "300000";
   amount.min = "50000"; amount.max = "1000000"; amount.step = "5000";
   const tenure = el("select"); tenure.id = "f-tenure";
@@ -162,24 +236,39 @@ function renderApply() {
   [["en", "English"], ["hi", "हिन्दी"], ["id", "Bahasa Indonesia"]].forEach(([v, t]) => {
     const o = el("option", null, t); o.value = v; if (v === "hi") o.selected = true; lang.appendChild(o);
   });
+  const demo = Boolean(state.config?.demo_mode);
+  const files = el("input"); files.id = "f-files"; files.type = "file"; files.accept = "application/pdf,.pdf";
+  files.multiple = true;
+  const fileList = el("ul", "file-list");
+  files.addEventListener("change", () => {
+    clear(fileList);
+    Array.from(files.files).forEach((f) => fileList.appendChild(el("li", null, `${f.name} · ${Math.ceil(f.size / 1024)} KB`)));
+  });
   const sample = el("select"); sample.id = "f-sample";
-  [["meena", "Meena's Home Kitchen — steady UPI income"],
-   ["rapid", "Rapid Auto Spares — statement has been edited"],
-   ["kiran", "Kiran Logistics — bounced instalments"]].forEach(([v, t]) => {
-    const o = el("option", null, t); o.value = v; sample.appendChild(o);
+  [["", "Upload my own statement"],
+   ["meena", "Sample: Meena's Home Kitchen — steady UPI income"],
+   ["rapid", "Sample: Rapid Auto Spares — statement has been edited"],
+   ["kiran", "Sample: Kiran Logistics — bounced instalments"]].forEach(([v, t]) => {
+    const o = el("option", null, t); o.value = v; if (v === "meena") o.selected = true; sample.appendChild(o);
   });
 
   add("Business name", name);
   add("Amount needed (₹)", amount);
   add("Repay over", tenure);
   add("Language for your result", lang);
-  add("Sample bank statement to submit", sample);
+  if (demo) add("Bank statement", sample);
+  add("Bank statements (PDF, up to 3, last six months)", files);
+  fields.lastChild.appendChild(fileList);
+  const fileField = fields.lastChild;
+  const syncSource = () => fileField.classList.toggle("hidden", demo && sample.value !== "");
+  sample.addEventListener("change", syncSource);
+  syncSource();
 
   const consentBox = el("div", "field");
   const consentLabel = el("label", "small");
   const check = el("input"); check.type = "checkbox"; check.id = "f-consent"; check.checked = true;
-  const text = el("span", null, " I allow ARTHA to read this bank statement to assess this loan, and to keep the "
-    + "result for the lender's records. Statements are synthetic and this is a prototype.");
+  const text = el("span", null, " I allow ARTHA to read these bank statements to assess this loan, and to keep the "
+    + "result for the lender's records for the retention period. I can ask for my application to be deleted.");
   consentLabel.append(check, text);
   consentBox.appendChild(consentLabel);
   fields.appendChild(consentBox);
@@ -205,7 +294,20 @@ async function startApplication(button) {
       consent: $("f-consent").checked,
     }) });
     state.caseId = created.case_id;
-    await api(`/api/cases/${state.caseId}/sample`, { method: "POST", body: JSON.stringify({ persona: $("f-sample").value }) });
+    const persona = state.config?.demo_mode ? $("f-sample").value : "";
+    if (persona) {
+      await api(`/api/cases/${state.caseId}/sample`, { method: "POST", body: JSON.stringify({ persona }) });
+    } else {
+      const chosen = Array.from($("f-files").files);
+      if (chosen.length === 0) throw new Error("Choose at least one PDF bank statement.");
+      for (const file of chosen.slice(0, 3)) {
+        const body = new FormData();
+        body.append("file", file);
+        note.textContent = `Uploading ${file.name}…`;
+        await api(`/api/cases/${state.caseId}/documents`, { method: "POST", body });
+      }
+      note.textContent = "";
+    }
     await api(`/api/cases/${state.caseId}/submit`, { method: "POST" });
     watchProgress();
   } catch (error) {

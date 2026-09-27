@@ -15,7 +15,7 @@ import threading
 from functools import lru_cache
 
 from sqlalchemy import (JSON, BigInteger, Boolean, Column, DateTime, Engine, Index, Integer, LargeBinary, MetaData,
-                        String, Table, Text, UniqueConstraint, create_engine, event)
+                        String, Table, Text, create_engine, event)
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.config import Settings, get_settings
@@ -108,7 +108,6 @@ rate_limits = Table(
     Column("bucket", String(200), primary_key=True),
     Column("window_start", BigInteger, primary_key=True),
     Column("hits", Integer, nullable=False),
-    UniqueConstraint("bucket", "window_start", name="uq_rate_limits_bucket_window"),
 )
 
 

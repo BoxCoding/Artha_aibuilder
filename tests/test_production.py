@@ -368,3 +368,33 @@ def test_queue_mode_runs_a_case_end_to_end_through_the_worker(monkeypatch: pytes
         if claim:  # someone else's leftover job from an earlier test
             queue.finish(claim.job_id, worker.worker_id, ok=True)
     assert client.get(f"/api/cases/{case_id}").json()["status"] == "READY_FOR_REVIEW"
+
+
+# --------------------------------------------------------------------------- rendering
+
+def test_concurrent_page_renders_do_not_crash_the_process() -> None:
+    """PDFium aborts the process if two threads enter it at once. The prototype rendered pages on
+    parallel threads without a lock and crashed as soon as a browser loaded a multi-page statement."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.documents.render import render_crop, render_page_png
+    from app.synthetic.generator import persona_statement, render_pdf
+
+    data = render_pdf(persona_statement("meena"))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        pages = list(pool.map(lambda n: render_page_png(data, n % 3 + 1, 1.0 + n / 100), range(16)))
+        crops = list(pool.map(lambda _: render_crop(data, 1, [100, 100, 200, 400]), range(8)))
+    assert all(p.startswith(b"\x89PNG") for p in pages + crops)
+    with pytest.raises(IndexError):
+        render_page_png(data, 999)
+
+
+def test_the_shipped_challenger_model_actually_loads() -> None:
+    """The prototype shipped the artifact but not scikit-learn, so the challenger (and the
+    POL-MODEL-CHALLENGE control) silently switched off and its tests skipped. Fail loudly instead."""
+    from app.risk.ml_model import METRICS_PATH, MODEL_PATH, load_model
+
+    assert MODEL_PATH.exists() and METRICS_PATH.exists()
+    model = load_model()
+    assert model is not None, "risk model artifact present but failed to load - check ML dependencies"
+    assert 0.0 <= model.predict_pd({}) <= 1.0

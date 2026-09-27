@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
 .env
+.env.*
 .git/
+.venv/
+var/
 tests/
 evals/results/
 docs/

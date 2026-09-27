@@ -1,0 +1,51 @@
+# Local production-shaped stack: PostgreSQL, a one-shot migration, the API and a pipeline worker.
+#   python -m app.cli generate-secrets >> .env.compose   # once
+#   docker compose --env-file .env.compose up --build
+#   docker compose exec api python -m app.cli create-user you@lender.example "Your Name" underwriter
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: artha
+      POSTGRES_USER: artha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-artha-local-only}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artha -d artha"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: {context: ., dockerfile: deploy/Dockerfile}
+    command: ["alembic", "upgrade", "head"]
+    environment: &env
+      APP_ENV: ${APP_ENV:-prod}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      DATABASE_URL: postgresql+psycopg://artha:${POSTGRES_PASSWORD:-artha-local-only}@db:5432/artha
+      PIPELINE_MODE: queue
+      LLM_MODE: ${LLM_MODE:-offline}
+      SECRET_KEY: ${SECRET_KEY:?run python -m app.cli generate-secrets}
+      RECEIPT_SIGNING_SEED: ${RECEIPT_SIGNING_SEED:?run python -m app.cli generate-secrets}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    build: {context: ., dockerfile: deploy/Dockerfile}
+    environment:
+      <<: *env
+      TRUST_PROXY_HEADERS: "false"
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  worker:
+    build: {context: ., dockerfile: deploy/Dockerfile}
+    command: ["python", "-m", "app.worker"]
+    environment: *env
+    stop_grace_period: 120s
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
