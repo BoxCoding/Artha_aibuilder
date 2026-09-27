@@ -859,6 +859,34 @@ function renderOutcome(data) {
     items.forEach((item) => list.appendChild(el("li", null, item)));
     body.appendChild(list);
   });
+  const plan = data.recommendations?.items || [];
+  if (plan.length) {
+    const box = el("div", "plan");
+    box.appendChild(el("span", "eyebrow", "Your personalised plan"));
+    const list = el("ul", "reasons");
+    plan.forEach((item) => list.appendChild(el("li", null, item.text)));
+    box.appendChild(list);
+    body.appendChild(box);
+  }
+  if (data.kfs) {
+    const box = el("div", "kfs-card");
+    box.appendChild(el("span", "eyebrow", "Key Fact Statement"));
+    box.appendChild(el("h3", null, `APR ${data.kfs.apr_pct}% · you receive ${money(data.kfs.net_disbursed_amount)} · ${data.kfs.tenure_months} × ${money(data.kfs.emi)}`));
+    box.appendChild(kfsTable(data.kfs));
+    if (data.kfs_accepted_at) {
+      box.appendChild(el("div", "notice ok", `You accepted these terms on ${new Date(data.kfs_accepted_at).toLocaleString("en-IN")}. `
+        + "The loan will be paid out to your account."));
+    } else {
+      const accept = el("button", "stamp", "I have read and accept these terms");
+      accept.addEventListener("click", async () => {
+        accept.disabled = true;
+        try { await api(`/api/cases/${state.caseId}/kfs/accept`, { method: "POST" }); renderOutcome(await api(`/api/cases/${state.caseId}`)); }
+        catch (error) { box.appendChild(el("p", "small error-text", error.message)); accept.disabled = false; }
+      });
+      box.append(el("p", "small muted", "The money is sent only after you accept. You can still exit during the cooling-off period."), accept);
+    }
+    body.appendChild(box);
+  }
   body.appendChild(el("p", "small muted", explanation.contact || ""));
 
   const copy = COPY[explanation.language] || COPY.en;
@@ -994,7 +1022,89 @@ function renderCaseHead() {
 }
 
 const TABS = [["memo", "Memo"], ["integrity", "Integrity"], ["cashflow", "Cash flow"], ["policy", "Policy"],
-              ["copilot", "Co-pilot"], ["audit", "Pipeline"]];
+              ["compliance", "Compliance"], ["copilot", "Co-pilot"], ["audit", "Pipeline"]];
+const CHECK_LABEL = { pass: "pass", attention: "needs attention", pending: "pending", fail: "fail", "n/a": "n/a" };
+const CHECK_CLASS = { pass: "info", attention: "medium", pending: "low", fail: "high", "n/a": "low" };
+
+function kfsTable(kfs) {
+  const table = el("table", "kfs");
+  const rows = [["Sanctioned amount", money(kfs.sanctioned_amount)], ["Tenure", `${kfs.tenure_months} monthly instalments`],
+    ["EMI", money(kfs.emi)], ["Interest rate", `${kfs.interest_rate_annual_pct}% a year, ${kfs.interest_type.toLowerCase()}`],
+    ["Processing fee + GST", `${money(kfs.processing_fee)} + ${money(kfs.gst_on_fees)}`],
+    ["Net amount you receive", money(kfs.net_disbursed_amount)], ["Total interest", money(kfs.total_interest)],
+    ["Total amount repayable", money(kfs.total_amount_repayable)], ["Annual Percentage Rate (APR)", `${kfs.apr_pct}%`],
+    ["Cooling-off period", kfs.cooling_off_terms], ["Prepayment", kfs.prepayment], ["Penal charges", kfs.penal_charges],
+    ["Recovery", kfs.recovery], ["Complaints", kfs.grievance_redressal]];
+  rows.forEach(([k, v]) => { const tr = el("tr"); tr.append(el("th", null, k), el("td", null, v)); table.appendChild(tr); });
+  return table;
+}
+
+function renderCompliance(panel, data) {
+  panel.appendChild(el("h3", null, "Compliance checklist"));
+  const list = el("ul", "checklist");
+  (data.compliance || []).forEach((item) => {
+    const li = el("li");
+    li.append(el("span", `pill ${CHECK_CLASS[item.status] || "low"}`, CHECK_LABEL[item.status] || item.status));
+    const text = el("div");
+    text.append(el("b", null, item.label), document.createElement("br"), el("span", "small muted", item.detail));
+    li.appendChild(text);
+    list.appendChild(li);
+  });
+  panel.appendChild(list);
+  const aml = (data.signals || []).filter((s) => s.category === "COMPLIANCE");
+  if (aml.length) {
+    panel.appendChild(el("h3", null, "AML screening"));
+    const cleared = new Set((data.compliance_clearances || []).map((c) => c.code));
+    aml.forEach((signal) => {
+      const block = el("div", "finding");
+      block.append(el("h3", null, `${signal.code} · ${signal.title}`), el("p", null, signal.explanation));
+      block.appendChild(citeRow(signal.evidence_ids, []));
+      if (cleared.has(signal.code)) {
+        const c = data.compliance_clearances.find((x) => x.code === signal.code);
+        block.appendChild(el("div", "notice ok", `Cleared by ${c.by}: ${c.note}`));
+      } else if (state.me.role === "risk_admin" && signal.severity === "HIGH") {
+        const note = control("input", `clear-${signal.signal_id}`, { placeholder: "Reason for clearing (at least 10 characters)" });
+        const btn = el("button", "ghost small-btn", "Clear as compliance");
+        btn.addEventListener("click", async () => {
+          try {
+            await api(`/api/cases/${state.caseId}/compliance/clear`, { method: "POST", body: JSON.stringify({ code: signal.code, note: note.value }) });
+            state.caseData = await api(`/api/cases/${state.caseId}`); renderPanel();
+          } catch (error) { block.appendChild(el("p", "small error-text", error.message)); }
+        });
+        const row = el("div", "row"); row.append(note, btn); block.appendChild(row);
+      }
+      panel.appendChild(block);
+    });
+  }
+  if (data.kfs) {
+    panel.appendChild(el("h3", null, "Key Fact Statement"));
+    panel.appendChild(el("p", "small muted", `${data.kfs.kfs_version} · ${data.kfs.kfs_sha256.slice(0, 16)} · `
+      + (data.kfs_accepted_at ? `accepted ${new Date(data.kfs_accepted_at).toLocaleString("en-IN")}` : "awaiting the customer's acceptance")));
+    panel.appendChild(kfsTable(data.kfs));
+    if (state.me.role === "loan_officer" && !data.kfs_accepted_at) {
+      const accept = el("button", "stamp", "Record customer's acceptance (in person)");
+      accept.addEventListener("click", async () => {
+        try { await api(`/api/cases/${state.caseId}/kfs/accept`, { method: "POST" }); state.caseData = await api(`/api/cases/${state.caseId}`); renderPanel(); }
+        catch (error) { panel.appendChild(el("p", "small error-text", error.message)); }
+      });
+      panel.appendChild(accept);
+    }
+  }
+  if (state.me.role !== "loan_officer") {
+    const report = el("button", "ghost small-btn", "Open the auditor report");
+    report.addEventListener("click", async () => {
+      const r = await api(`/api/cases/${state.caseId}/compliance`);
+      const box = el("div", "finding");
+      box.appendChild(el("h3", null, `Auditor report · ${r.generated_at} · audit chain ${r.audit_chain_valid ? "valid" : "BROKEN"}`));
+      const t = el("table", "audit");
+      r.audit_trail.forEach((e) => { const tr = el("tr"); tr.append(el("td", null, String(e.seq)), el("td", null, e.at.slice(0, 19).replace("T", " ")),
+        el("td", null, e.actor), el("td", null, e.action), el("td", null, e.event_hash.slice(0, 10))); t.appendChild(tr); });
+      box.appendChild(t);
+      report.replaceWith(box);
+    });
+    panel.appendChild(report);
+  }
+}
 
 function renderTabs() {
   const tabs = $("case-tabs");
@@ -1122,6 +1232,8 @@ function renderPanel() {
       data.policy.conditions.forEach((c) => list.appendChild(el("li", null, c)));
       panel.appendChild(list);
     }
+  } else if (state.tab === "compliance") {
+    renderCompliance(panel, data);
   } else if (state.tab === "copilot") {
     renderCopilot(panel);
   } else {
@@ -1393,8 +1505,76 @@ function renderDecision() {
 
 /* ------------------------------------------------------------------ risk console */
 
+async function loadPortfolio() {
+  const p = await api("/api/risk/portfolio");
+  const host = $("risk-portfolio");
+  clear(host);
+  const tiles = el("div", "metrics");
+  [["applications", p.applications], ["approval rate", p.approval_rate == null ? "—" : `${Math.round(p.approval_rate * 100)}%`],
+   ["fraud flag rate", p.fraud_flag_rate == null ? "—" : `${Math.round(p.fraud_flag_rate * 100)}%`],
+   ["compliance alerts", p.compliance_alerts ?? 0], ["cross-application alerts", (p.cross_application_alerts || []).length],
+   ["events published", `${p.events?.published ?? 0} / ${(p.events?.published ?? 0) + (p.events?.pending ?? 0)}`]]
+    .forEach(([label, value]) => { const m = el("div", "metric"); m.append(el("b", null, String(value)), el("span", null, label)); tiles.appendChild(m); });
+  host.appendChild(tiles);
+  host.appendChild(el("p", "small muted", `Source: ${p.backend === "bigquery" ? "BigQuery (Pub/Sub event stream)" : p.backend}`));
+  const days = p.daily_applications || [];
+  if (days.length) {
+    host.appendChild(el("h3", null, "Applications, last 14 days"));
+    const bars = el("div", "spark");
+    const max = Math.max(1, ...days.map((d) => d.count));
+    days.forEach((d) => {
+      const col = el("div", "spark-col");
+      const bar = el("i");
+      bar.style.height = `${Math.max(3, (d.count / max) * 100)}%`;
+      col.title = `${d.day}: ${d.count}`;
+      col.append(bar, el("span", null, d.day.slice(8)));
+      bars.appendChild(col);
+    });
+    host.appendChild(bars);
+  }
+  const mixes = el("div", "mixes");
+  [["Channel", p.channel_mix], ["Industry", p.industry_mix], ["State", p.state_mix], ["Average PD by band", p.average_pd_by_band]].forEach(([title, mix]) => {
+    if (!mix || !Object.keys(mix).length) return;
+    const box = el("div", "mix");
+    box.appendChild(el("h3", null, title));
+    Object.entries(mix).forEach(([k, v]) => box.appendChild(el("p", "small", `${k.replaceAll("_", " ")} · ${typeof v === "number" && v < 1 && title.startsWith("Average") ? `${(v * 100).toFixed(1)}%` : v}`)));
+    mixes.appendChild(box);
+  });
+  host.appendChild(mixes);
+  const alerts = p.cross_application_alerts || [];
+  host.appendChild(el("h3", null, "Cross-application alerts"));
+  if (!alerts.length) host.appendChild(el("p", "muted", "No statement, account or phone number has been seen under a second applicant."));
+  alerts.forEach((a) => {
+    const row = el("button", "role-btn");
+    row.append(el("span", "role-initial", "!"), el("span", null, `${a.case_id} · ${a.codes.join(", ")}`), el("span", "role-go", "open"));
+    row.addEventListener("click", () => openCase(a.case_id));
+    host.appendChild(row);
+  });
+}
+
+function wireKnowledge() {
+  const input = $("kb-q");
+  const out = $("kb-results");
+  const go = async () => {
+    const q = input.value.trim();
+    clear(out);
+    if (!q) return;
+    const r = await api(`/api/knowledge/search?q=${encodeURIComponent(q)}`);
+    if (!r.results.length) out.appendChild(el("p", "muted", "Nothing in the policy or glossary matches that question."));
+    r.results.forEach((hit) => {
+      const block = el("div", "finding");
+      block.append(el("h3", null, hit.title), el("p", "clause", hit.text), el("span", "cite", `${hit.source} · ${hit.engine}`));
+      out.appendChild(block);
+    });
+  };
+  $("kb-go").onclick = go;
+  input.onkeydown = (e) => { if (e.key === "Enter") go(); };
+}
+
 async function loadRisk() {
   show("risk");
+  loadPortfolio().catch(() => {});
+  wireKnowledge();
   const data = await api("/api/risk/overview");
   const metrics = $("risk-metrics");
   clear(metrics);

@@ -433,3 +433,27 @@ input[type="file"]::file-selector-button { font: inherit; font-weight: 600; marg
   .queue-table { display: block; overflow-x: auto; white-space: nowrap; }
   .upload input[type="password"] { width: 100%; }
 }
+
+/* ---------------------------------------------------------------- compliance, KFS, plan, portfolio */
+.checklist { list-style: none; padding: 0; margin: .4rem 0 1rem; display: grid; gap: .5rem; }
+.checklist li { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .55rem .7rem; background: var(--surface-2); border-radius: var(--radius-sm); }
+.checklist .pill { justify-self: start; }
+table.kfs { width: 100%; border-collapse: collapse; font-size: .9rem; margin: .4rem 0 .8rem; }
+table.kfs th { text-align: left; font-weight: 600; color: var(--ink-soft); width: 42%; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
+.kfs-card, .plan { margin: 1.2rem 0; padding: 1.1rem 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.plan { border-left: 4px solid var(--brand-2); }
+.kfs-card h3 { margin: .3rem 0 .6rem; font-size: 1.15rem; }
+.spark { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: .35rem; align-items: end; height: 120px; max-width: 640px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem .8rem .4rem; box-shadow: var(--shadow-sm); margin-bottom: 1rem; }
+.spark-col { display: grid; grid-template-rows: 1fr auto; height: 100%; align-items: end; text-align: center; }
+.spark-col i { display: block; width: 100%; background: var(--brand-grad); border-radius: 4px 4px 1px 1px; min-height: 3px; }
+.spark-col span { font-size: .66rem; color: var(--ink-faint); margin-top: .2rem; }
+.mixes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .8rem; margin-bottom: 1rem; }
+.mix { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: .8rem 1rem; box-shadow: var(--shadow-sm); }
+.mix h3 { font-size: .9rem; color: var(--ink-soft); margin-bottom: .3rem; }
+.mix p { margin: .15rem 0; }
+.kb { max-width: 760px; margin-bottom: .8rem; }
+.kb input { flex: 1; min-width: 220px; width: auto; }
+#kb-results { max-width: 760px; }
+.checklist b { font-size: .95rem; font-weight: 600; }
