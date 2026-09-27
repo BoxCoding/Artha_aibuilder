@@ -1,0 +1,16 @@
+{
+  "version": "risk-gbm.v1",
+  "trained_on": 2712,
+  "tested_on": 1163,
+  "default_rate": 0.1086,
+  "ml_auc": 0.683,
+  "ml_gini": 0.366,
+  "ml_ks": 0.2873,
+  "ml_brier": 0.08981,
+  "scorecard_auc": 0.6434,
+  "scorecard_gini": 0.2868,
+  "scorecard_ks": 0.261,
+  "scorecard_brier": 0.09822,
+  "gini_uplift": 0.0792,
+  "calibration_error": 0.0252
+}

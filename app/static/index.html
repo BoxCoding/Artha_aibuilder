@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARTHA — evidence-first lending</title>
+<meta name="description" content="ARTHA reads a small business's bank statements, checks they are genuine, and gives an underwriter an evidence-linked recommendation.">
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <div class="mark">ARTHA<span>evidence-first lending</span></div>
+    <nav id="nav"></nav>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <!-- sign-in -->
+  <section id="view-gate" class="gate">
+    <div>
+      <h1>A thin file is not the same as a bad borrower.</h1>
+      <p class="muted">Millions of small businesses have no credit history, only a bank statement — and a statement
+        can be edited in a browser in about a minute. ARTHA reads the statement, checks the file itself for signs of
+        editing, and hands an underwriter a recommendation where every sentence points back to the row it came from.
+        The underwriter decides; the applicant gets told why, in their own language.</p>
+      <div class="roles" id="roles"></div>
+      <p class="small muted" id="gate-note"></p>
+    </div>
+    <div class="specimen" id="specimen"></div>
+  </section>
+
+  <!-- borrower -->
+  <section id="view-apply" class="hidden">
+    <h1>Apply for working capital</h1>
+    <div class="sheet" id="apply-form"></div>
+  </section>
+
+  <section id="view-progress" class="hidden">
+    <h1 id="progress-title">Reading your statements</h1>
+    <p class="muted">This usually takes under a minute. You can watch each step as it finishes.</p>
+    <div class="ledger" id="ledger"></div>
+  </section>
+
+  <section id="view-outcome" class="hidden">
+    <div id="outcome-body"></div>
+    <div class="coach">
+      <h2>Ask about your application</h2>
+      <div class="chips" id="coach-chips"></div>
+      <div class="thread" id="coach-thread"></div>
+      <div class="row">
+        <input id="coach-input" maxlength="500" placeholder="Type your question">
+        <button id="coach-send">Send</button>
+      </div>
+      <p class="small muted" id="coach-note"></p>
+    </div>
+  </section>
+
+  <!-- underwriter -->
+  <section id="view-queue" class="hidden">
+    <div class="spread">
+      <h1>Review queue</h1>
+      <button class="ghost" id="queue-refresh">Refresh</button>
+    </div>
+    <table class="queue-table">
+      <thead><tr><th>Business</th><th>Requested</th><th>Band</th><th>Recommendation</th><th>Integrity</th><th>Status</th></tr></thead>
+      <tbody id="queue-body"></tbody>
+    </table>
+  </section>
+
+  <section id="view-case" class="hidden">
+    <div class="spread">
+      <h1 id="case-title">Case</h1>
+      <button class="ghost" id="back-to-queue">Back to queue</button>
+    </div>
+    <div class="workbench">
+      <div>
+        <div id="case-head"></div>
+        <div class="tabs" role="tablist" id="case-tabs"></div>
+        <div class="panel" id="case-panel"></div>
+        <div class="decision" id="decision-panel"></div>
+      </div>
+      <div class="sheet viewer">
+        <div class="viewer-head">
+          <select id="doc-select"></select>
+          <span class="small muted" id="viewer-note">Select a citation to mark the page</span>
+        </div>
+        <div class="page-stack" id="page-stack"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- risk -->
+  <section id="view-risk" class="hidden">
+    <h1>Risk and assurance</h1>
+    <div class="metrics" id="risk-metrics"></div>
+    <h2>Score bands</h2>
+    <div class="bars" id="risk-bands"></div>
+    <h2>Findings raised</h2>
+    <div class="bars" id="risk-signals"></div>
+    <h2>Underwriter overrides</h2>
+    <div id="risk-overrides"></div>
+    <h2>Audit trail</h2>
+    <p class="small muted" id="risk-chain"></p>
+    <table class="audit"><tbody id="risk-audit"></tbody></table>
+  </section>
+</main>
+
+<script src="/static/app.js" type="module"></script>
+</body>
+</html>

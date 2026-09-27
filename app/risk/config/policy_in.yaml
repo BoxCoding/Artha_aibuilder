@@ -1,0 +1,37 @@
+policy_id: msme-working-capital-in
+version: 2026.09.1
+jurisdiction: IN
+currency: INR
+clauses:
+  POL-INTEGRITY: "Applications with a corroborated document-integrity finding of HIGH or CRITICAL severity are referred to integrity review and are not decided on the submitted documents."
+  POL-META-VERIFY: "Where only medium-severity integrity findings exist, the statement must be re-verified directly with the bank or through a consented account-aggregator fetch before approval."
+  POL-HISTORY: "A minimum of six months of bank statement history is required."
+  POL-BOUNCES: "Three or more returned loan instalments in the last three months result in a decline."
+  POL-BANDS: "Risk bands A and B are eligible for approval, band C for approval with conditions, band D for referral, and band E for decline."
+  POL-SIZING: "The loan amount is the lowest of the requested amount, the product maximum, four times the average daily balance, and the amount whose instalment fits within half of the monthly surplus after existing instalments."
+  POL-MODEL-CHALLENGE: "Where the transparent scorecard and the learned challenger model disagree materially about an application, the case is referred for human assessment rather than decided automatically."
+  POL-FOUR-EYES: "Approvals above 5,00,000 require a second approver."
+knockouts:
+  - {id: KO-INTEGRITY, clause: POL-INTEGRITY, signal_category: FRAUD, min_severity: HIGH, outcome: REFER_INTEGRITY_REVIEW, reason_code: RC-DOCUMENT-VERIFICATION}
+  - {id: KO-HISTORY, clause: POL-HISTORY, feature: statement_span_months, op: lt, value: 6, outcome: DECLINE, reason_code: RC-SHORT-HISTORY}
+  - {id: KO-BOUNCES, clause: POL-BOUNCES, feature: nach_returns_3m, op: gte, value: 3, outcome: DECLINE, reason_code: RC-PAYMENT-RETURNS}
+soft_rules:
+  - {id: SR-MODEL-DISAGREE, clause: POL-MODEL-CHALLENGE, signal_code: RK-MODEL-DISAGREE, outcome: REFER, reason_code: RC-MODEL-DISAGREEMENT, condition: "The two risk models disagree about this application; a human must assess it."}
+  - {id: SR-META-VERIFY, clause: POL-META-VERIFY, signal_category: FRAUD, min_severity: MEDIUM, outcome: REFER, reason_code: RC-DOCUMENT-VERIFICATION, condition: "Re-verify the bank statement directly with the bank or via a consented account-aggregator fetch."}
+bands:
+  A: APPROVE
+  B: APPROVE
+  C: APPROVE_WITH_CONDITIONS
+  D: REFER
+  E: DECLINE
+band_conditions:
+  C: ["Monthly bank statement review for the first six months.", "Instalment collected by NACH mandate on the account analysed."]
+sizing:
+  min_amount: "50000"
+  max_amount: "1000000"
+  abb_multiple: "4"
+  surplus_share: "0.50"
+  round_down_to: "5000"
+  allowed_tenures: [12, 18, 24, 36]
+  indicative_annual_rate: {A: "0.18", B: "0.21", C: "0.24", D: "0.26", E: "0.26"}
+four_eyes_above: "500000"

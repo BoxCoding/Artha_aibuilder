@@ -1,0 +1,100 @@
+# Approved borrower-facing texts. The explanation builder and coach may only use these.
+contact:
+  en: "Need a person to help? Tap 'Ask for a call back' and a loan officer will call you within two working days. You can also write to our grievance officer from the Help page."
+  hi: "किसी व्यक्ति से मदद चाहिए? 'कॉल बैक का अनुरोध करें' दबाएँ, दो कार्य-दिवसों में लोन अधिकारी आपको कॉल करेंगे। आप सहायता पेज से हमारे शिकायत अधिकारी को भी लिख सकते हैं।"
+  id: "Butuh bantuan petugas? Ketuk 'Minta ditelepon' dan petugas pinjaman akan menelepon Anda dalam dua hari kerja. Anda juga dapat menulis ke petugas pengaduan melalui halaman Bantuan."
+outcomes:
+  APPROVE:
+    en: "Good news: your loan of ₹{amount} for {tenure} months has been approved."
+    hi: "खुशखबरी: {tenure} महीनों के लिए ₹{amount} का आपका लोन मंज़ूर हो गया है।"
+    id: "Kabar baik: pinjaman Anda sebesar ₹{amount} untuk {tenure} bulan telah disetujui."
+  APPROVE_WITH_CONDITIONS:
+    en: "Your loan of ₹{amount} for {tenure} months has been approved with a few conditions."
+    hi: "{tenure} महीनों के लिए ₹{amount} का आपका लोन कुछ शर्तों के साथ मंज़ूर हुआ है।"
+    id: "Pinjaman Anda sebesar ₹{amount} untuk {tenure} bulan disetujui dengan beberapa syarat."
+  DECLINE:
+    en: "We are not able to approve your loan right now."
+    hi: "हम इस समय आपका लोन मंज़ूर नहीं कर पा रहे हैं।"
+    id: "Kami belum dapat menyetujui pinjaman Anda saat ini."
+  REFER:
+    en: "Your application needs a closer look by a loan officer before a decision is made."
+    hi: "फ़ैसले से पहले एक लोन अधिकारी आपके आवेदन को ध्यान से देखेंगे।"
+    id: "Pengajuan Anda perlu diperiksa lebih lanjut oleh petugas sebelum diputuskan."
+  REFER_INTEGRITY_REVIEW:
+    en: "Some of your documents could not be verified. A loan officer will contact you about the next steps."
+    hi: "आपके कुछ दस्तावेज़ों की पुष्टि नहीं हो सकी। एक लोन अधिकारी अगले कदमों के बारे में आपसे संपर्क करेंगे।"
+    id: "Beberapa dokumen Anda belum dapat diverifikasi. Petugas akan menghubungi Anda untuk langkah selanjutnya."
+reduced_amount:
+  en: "This is less than the ₹{requested} you asked for, so that the monthly instalment stays comfortable for your business."
+  hi: "यह आपकी माँगी गई ₹{requested} की राशि से कम है, ताकि मासिक किश्त आपके व्यापार पर भारी न पड़े।"
+  id: "Jumlah ini lebih kecil dari ₹{requested} yang Anda ajukan, agar cicilan bulanan tetap ringan bagi usaha Anda."
+key_terms:
+  en: "Your instalment (EMI) would be about ₹{emi} every month for {tenure} months, at an indicative interest rate of {rate}% a year. The final terms will be in your key fact statement before you sign."
+  hi: "आपकी मासिक किश्त (EMI) {tenure} महीनों तक लगभग ₹{emi} होगी, सांकेतिक ब्याज दर {rate}% सालाना। हस्ताक्षर से पहले अंतिम शर्तें आपके 'की फैक्ट स्टेटमेंट' में होंगी।"
+  id: "Cicilan bulanan Anda sekitar ₹{emi} selama {tenure} bulan, dengan perkiraan bunga {rate}% per tahun. Ketentuan akhir tercantum dalam ringkasan informasi pinjaman sebelum Anda menandatangani."
+reasons:
+  RC-PAYMENT-RETURNS:
+    en: "Some of your loan instalments (EMIs) were returned because there was not enough money in the account."
+    hi: "पिछले कुछ महीनों में आपकी कुछ लोन किश्तें (EMI) खाते में पैसे कम होने के कारण वापस लौट गईं।"
+    id: "Beberapa cicilan pinjaman Anda gagal ditarik karena saldo rekening tidak cukup."
+  RC-LOW-BALANCE-BUFFER:
+    en: "The average balance in your account is low compared with your monthly income."
+    hi: "आपके खाते में औसत बैलेंस आपकी मासिक कमाई की तुलना में कम रहता है।"
+    id: "Saldo rata-rata rekening Anda rendah dibandingkan pemasukan bulanan."
+  RC-FREQUENT-LOW-BALANCE:
+    en: "On many days your account balance was close to zero."
+    hi: "कई दिनों तक आपके खाते का बैलेंस लगभग शून्य के पास रहा।"
+    id: "Pada banyak hari saldo rekening Anda hampir nol."
+  RC-VOLATILE-INCOME:
+    en: "Your monthly income goes up and down a lot from month to month."
+    hi: "आपकी मासिक कमाई महीने-दर-महीने काफ़ी ऊपर-नीचे होती है।"
+    id: "Pemasukan bulanan Anda naik-turun cukup besar."
+  RC-CASH-HEAVY-INCOME:
+    en: "A large part of your income comes as cash deposits, which are harder to verify."
+    hi: "आपकी कमाई का बड़ा हिस्सा नकद जमा के रूप में आता है, जिसकी जाँच करना कठिन होता है।"
+    id: "Sebagian besar pemasukan Anda berupa setoran tunai yang lebih sulit diverifikasi."
+  RC-HIGH-EXISTING-DEBT:
+    en: "A large part of your income already goes to other loan instalments."
+    hi: "आपकी कमाई का बड़ा हिस्सा पहले से चल रहे लोन की किश्तों में जाता है।"
+    id: "Sebagian besar pemasukan Anda sudah dipakai untuk cicilan pinjaman lain."
+  RC-SHORT-HISTORY:
+    en: "We only have a short record of your account so far."
+    hi: "हमारे पास अभी आपके खाते का केवल छोटी अवधि का रिकॉर्ड है।"
+    id: "Riwayat rekening yang kami terima masih pendek."
+  RC-DECLINING-INCOME:
+    en: "Your income has been lower in recent months than before."
+    hi: "हाल के महीनों में आपकी कमाई पहले से कम हुई है।"
+    id: "Pemasukan Anda menurun dalam beberapa bulan terakhir."
+  RC-DOCUMENT-VERIFICATION:
+    en: "Some of your documents could not be verified."
+    hi: "आपके कुछ दस्तावेज़ों की पुष्टि नहीं हो सकी।"
+    id: "Beberapa dokumen Anda belum dapat diverifikasi."
+  RC-LOW-REPAYMENT-CAPACITY:
+    en: "Your current monthly savings are not yet enough for the instalment on the smallest loan we offer."
+    hi: "आपकी मौजूदा मासिक बचत अभी हमारे सबसे छोटे लोन की किश्त के लिए भी काफ़ी नहीं है।"
+    id: "Sisa pemasukan bulanan Anda saat ini belum cukup untuk cicilan pinjaman terkecil kami."
+steps:
+  RC-PAYMENT-RETURNS:
+    en: "Keep enough money in the account before each instalment date, so that no payment is returned for the next three months."
+    hi: "अगले तीन महीनों तक हर किश्त की तारीख से पहले खाते में पर्याप्त पैसा रखें, ताकि कोई भुगतान वापस न लौटे।"
+    id: "Pastikan saldo cukup sebelum setiap tanggal cicilan agar tidak ada pembayaran yang gagal selama tiga bulan ke depan."
+  RC-LOW-BALANCE-BUFFER:
+    en: "Try to keep a higher balance in the account, on average about {target_pct} of one month's income."
+    hi: "खाते में औसतन अपनी एक महीने की कमाई का लगभग {target_pct} बैलेंस बनाए रखने की कोशिश करें।"
+    id: "Usahakan saldo rata-rata sekitar {target_pct} dari pemasukan satu bulan."
+  RC-FREQUENT-LOW-BALANCE:
+    en: "Avoid letting the balance fall close to zero; aim for fewer than {target_pct} of days with a very low balance."
+    hi: "बैलेंस को शून्य के पास न जाने दें; बहुत कम बैलेंस वाले दिन {target_pct} से कम रखने का लक्ष्य रखें।"
+    id: "Hindari saldo hampir nol; usahakan hari dengan saldo sangat rendah kurang dari {target_pct}."
+  RC-CASH-HEAVY-INCOME:
+    en: "Ask customers to pay by UPI or bank transfer, so that cash is less than {target_pct} of your income."
+    hi: "ग्राहकों से UPI या बैंक ट्रांसफ़र से भुगतान लें, ताकि नकद आपकी कमाई के {target_pct} से कम रहे।"
+    id: "Minta pelanggan membayar lewat transfer bank atau QR agar porsi tunai kurang dari {target_pct} pemasukan."
+  RC-SHORT-HISTORY:
+    en: "Share a longer account history when you apply again, ideally twelve months."
+    hi: "अगली बार आवेदन करते समय खाते का लंबा रिकॉर्ड दें, बेहतर होगा बारह महीने का।"
+    id: "Saat mengajukan lagi, lampirkan riwayat rekening yang lebih panjang, idealnya dua belas bulan."
+  RC-DOCUMENT-VERIFICATION:
+    en: "Keep your original bank statement ready, or allow the officer to fetch it directly from your bank with your consent."
+    hi: "अपना मूल बैंक स्टेटमेंट तैयार रखें, या अपनी सहमति से अधिकारी को इसे सीधे बैंक से लेने दें।"
+    id: "Siapkan rekening koran asli Anda, atau izinkan petugas mengambilnya langsung dari bank dengan persetujuan Anda."

@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-09-26",
+  "population": 100,
+  "memo_sample": 20,
+  "tamper_recall": 1.0,
+  "tamper_false_positive_rate": 0.0,
+  "row_accuracy": 1.0,
+  "injection_neutralised_rate": 1.0,
+  "grounded_claim_rate": 1.0,
+  "critic_issues_on_offline_memos": 0,
+  "unsafe_approvals": 0,
+  "unsafe_examples": [],
+  "median_case_ms": 447.7,
+  "p95_case_ms": 641.5,
+  "counts": {
+    "tampered": 56,
+    "clean": 44,
+    "claims": 255,
+    "injections": 16,
+    "rows": 18367
+  },
+  "recall_by_pattern": {
+    "editor_resave": 1.0,
+    "inflate_recomputed": 1.0,
+    "inflate_row_only": 1.0,
+    "injection": 1.0
+  },
+  "pattern_counts": {
+    "editor_resave": 25,
+    "inflate_recomputed": 15,
+    "inflate_row_only": 11,
+    "injection": 16
+  },
+  "band_distribution": {
+    "B": 45,
+    "C": 23,
+    "D": 17,
+    "E": 15
+  },
+  "outcome_distribution": {
+    "APPROVE": 21,
+    "APPROVE_WITH_CONDITIONS": 9,
+    "DECLINE": 10,
+    "REFER": 4,
+    "REFER_INTEGRITY_REVIEW": 56
+  }
+}
