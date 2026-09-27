@@ -46,9 +46,10 @@ The pipeline is built as if the data were real:
 
 ## Retention
 
-The prototype keeps cases in memory with LRU eviction and loses everything on restart. A real
-deployment needs a documented retention schedule, deletion on request, and encryption at rest with
-customer-managed keys.
+Cases, documents and jobs live in PostgreSQL. The worker deletes cases whose last update is older than
+`CASE_RETENTION_DAYS` (default 30) every hour, and applicants can delete their own application at any
+time; the hash-chained audit log is kept because it holds digests, not personal data. Encryption at rest
+is Cloud SQL's default; customer-managed keys remain to be set up.
 
 ## Known gaps
 

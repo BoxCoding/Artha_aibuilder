@@ -22,7 +22,8 @@ Browser (three role-shaped interfaces, strict CSP, no framework)
 Cloud Run: FastAPI
    ├── routes: auth, upload validation, SSE progress, decisions, coach
    ├── role-shaped views: a borrower response has no scores, signals or evidence in it
-   └── pipeline executor (thread pool, own event loop per case)
+   └── pipeline_jobs table ──→ worker process(es): `python -m app.worker`
+       (inline thread pool in development)
            │
            ▼
        ADK Workflow graph
@@ -34,7 +35,8 @@ Cloud Run: FastAPI
            │
            ├── LLMGateway ──→ Gemini (Agent Platform / Gemini API)
            ├── ModelArmorGuard ──→ Model Armor (optional managed screening)
-           └── Store (in-memory today; Firestore + Cloud Storage behind the same interface)
+           └── Store: PostgreSQL (cases as JSONB + summary columns, document blobs, audit chain,
+               accounts, jobs, rate limits); in-memory for unit tests
 ```
 
 Each node writes a snapshot to the store when it finishes, so the progress stream and every API read
@@ -83,9 +85,10 @@ complete.
 
 | Prototype | Production |
 | --- | --- |
-| In-memory store, one worker | Firestore for cases, Cloud Storage with CMEK for documents |
-| Thread-pool executor | Pub/Sub queue and a separate Cloud Run worker service |
-| Demo sign-in | Identity Platform, MFA for staff, IAP in front of the service |
+| ~~In-memory store, one worker~~ | **Done:** PostgreSQL (Cloud SQL) behind the same store interface; Alembic migrations |
+| ~~Thread-pool executor~~ | **Done:** durable `pipeline_jobs` queue (`SKIP LOCKED` leases, retries) and a separate worker service |
+| ~~Demo sign-in~~ | **Done:** Argon2id password accounts, lockout, revocable sessions; demo accounts refused in prod. **Next:** Identity Platform / SSO and MFA for staff, IAP in front |
+| Documents in PostgreSQL | Cloud Storage with CMEK once volumes justify it |
 | Hand-set scorecard weights | Weights fitted to repayment outcomes, with fairness testing per segment |
 | Synthetic statements only | Account-aggregator fetch as the primary path, with upload as fallback |
-| Hash-chained in-process audit | Same chain written to BigQuery with a retention policy, plus DLP scanning |
+| Hash-chained audit table (append-only trigger) | Same chain written to BigQuery with a retention policy, plus DLP scanning |

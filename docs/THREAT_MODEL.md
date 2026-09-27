@@ -33,11 +33,23 @@ rests on.
 | 19 | Model or Model Armor outage silently degrading safety | Gateway raises rather than returning empty; the pipeline falls back to the deterministic composer and records it; Model Armor failures are logged and the local layer still runs | `ai/gateway.py`, `pipeline/workflow.py` |
 | 20 | PII leaking into prompts or logs | Masking of email, PAN, Aadhaar-shaped numbers, phone numbers and long digit strings before text enters a bundle; logs carry error types, not payloads | `security/masking.py` |
 
-## Accepted risks in the prototype
+## Production controls added
 
-- The demo sign-in is a role picker, not authentication.
-- The store is in-memory; a restart loses cases. Documents are not encrypted at rest beyond what Cloud
-  Run provides.
-- Rate limits are per instance, not global. Cloud Armor would handle edge limits in production.
+| # | Threat | Control | Where |
+| --- | --- | --- | --- |
+| 21 | Credential stuffing and brute force | Argon2id hashes; per-email and per-address sign-in limits shared across instances; lockout after repeated failures; identical responses for unknown email and wrong password, with a dummy hash check to equalise timing | `domain/users.py`, `api/main.py` |
+| 22 | Stolen or stale sessions | The cookie carries a session version checked against the database on every request: sign-out, password reset and account disablement revoke every session at once | `api/security.py` |
+| 23 | Cross-site request forgery | SameSite=strict plus an Origin check on every state-changing API request | `api/security.py`, `api/main.py` |
+| 24 | Two underwriters racing a decision, or self-countersigning | Decision check-and-set runs under the case row lock; a countersignature must match the proposal exactly and come from a different account | `api/main.py`, `domain/sql_store.py` |
+| 25 | Retrospective audit tampering by the application or an operator using its role | Append-only trigger on `audit_log` in PostgreSQL, advisory-locked appends, `python -m app.cli verify-audit` | `migrations/`, `domain/sql_store.py` |
+| 26 | Unsafe production configuration | The service refuses to start in prod with a weak secret, demo mode, no database, no persistent receipt key or an in-process pipeline | `config.py` |
+| 27 | Lost work on restart | Cases, documents and jobs in PostgreSQL; worker leases expire and are reclaimed; jobs that keep failing park the case for a person | `pipeline/jobs.py`, `worker.py` |
+
+## Accepted risks
+
+- No MFA or SSO for staff yet; put Identity-Aware Proxy in front of staff access until there is.
+- Documents are stored in PostgreSQL and encrypted at rest by Cloud SQL with Google-managed keys; CMEK
+  and Cloud Storage are the next step.
+- Rate limits are enforced in the application database; Cloud Armor should handle volumetric edge limits.
 - The injection detector is pattern-based and was written by the same author as the attacks it is
   evaluated against. A genuinely adversarial red-team set is outstanding work.

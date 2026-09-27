@@ -22,20 +22,59 @@ Nothing here is mocked. On a laptop, with no cloud credentials and no model call
 - record a decision, trigger four-eyes approval, and read the borrower's explanation in English, Hindi
   or Indonesian
 - issue and independently verify a signed decision receipt
-- run 71 tests, a gated evaluation suite over 120 labelled statements, and a red-team agent that
+- run 99 tests, a gated evaluation suite over 120 labelled statements, and a red-team agent that
   attacks the forensic rules until it finds their boundary
 - train the learned risk model from scratch (`python -m evals.train_risk_model --n 9000`)
 
 ```bash
-pip install -r requirements.txt
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env                       # LLM_MODE=offline needs no credentials
-uvicorn app.api.main:app --reload --port 8080
-# open http://127.0.0.1:8080 and sign in as Meena Devi
+.venv/bin/uvicorn app.api.main:app --reload --port 8080
+# open http://127.0.0.1:8080 and sign in as Meena Devi (demo mode), or create an account
 
-python -m pytest tests -q                  # 49 tests
+.venv/bin/python -m pytest tests -q        # 99 tests, through the SQL store on SQLite
+ARTHA_TEST_DATABASE_URL=postgresql+psycopg://localhost/artha_test .venv/bin/python -m pytest tests -q
 python -m evals.run_evals --n 120          # writes docs/EVAL_REPORT.md, exits non-zero on regression
 python -m evals.train_risk_model --n 9000  # trains the challenger, writes docs/MODEL_METRICS.md
 ```
+
+## Running it for real
+
+The prototype became a service with state that survives restarts, real accounts and a durable
+pipeline. The shape is one image with three entry points:
+
+| Process | Command | What it does |
+| --- | --- | --- |
+| API | `uvicorn app.api.main:app` | Routes, sessions, the three interfaces. Stateless: scale freely. |
+| Worker | `python -m app.worker` | Claims queued cases (`SELECT … FOR UPDATE SKIP LOCKED`), runs the pipeline under a renewable lease, retries after a crash, parks a case for a person after repeated failures, runs the retention sweep. Drains on SIGTERM. |
+| Migrate | `alembic upgrade head` | Schema, including an append-only trigger on the audit log. |
+
+```bash
+python -m app.cli generate-secrets > .env.compose        # SECRET_KEY and RECEIPT_SIGNING_SEED
+docker compose --env-file .env.compose up --build        # PostgreSQL + migrate + API + worker
+docker compose exec api python -m app.cli create-user you@lender.example "Your Name" underwriter
+```
+
+With `APP_ENV=prod` the service **refuses to start** unless the secret is strong, demo mode is off,
+`DATABASE_URL` is PostgreSQL, the receipt key is persistent and the pipeline runs through the queue.
+Borrowers register themselves; staff accounts are created with `python -m app.cli create-user`.
+`python -m app.cli verify-audit` recomputes the audit chain. Cloud Run + Cloud SQL steps are in
+[deploy/README.md](deploy/README.md).
+
+What changed from the prototype, briefly:
+
+- **Persistence** — PostgreSQL behind the original store interface: each case as a JSONB document plus
+  indexed summary columns (the queue and risk console no longer load every transaction of every case),
+  PDFs as blobs, the audit chain as an append-only table. Decisions, uploads and submissions
+  check-and-set under a row lock, so racing underwriters or a double click cannot corrupt a case.
+- **Accounts** — Argon2id passwords, lockout, sign-in limits per email and per address, sessions revoked
+  on sign-out/password change/disable. Demo accounts and sample statements exist only in demo mode.
+- **Hardening** — Origin checks on writes, rate limits shared across instances, readiness that checks the
+  database, a generic 500 with a request id instead of a stack trace.
+- **Two prototype bugs fixed** — concurrent page renders entered PDFium (not thread-safe) and aborted the
+  process as soon as an underwriter opened a multi-page statement; and `requirements.txt` omitted
+  scikit-learn, so the learned challenger and `POL-MODEL-CHALLENGE` silently switched off in every
+  deployed build (its tests skipped rather than failed). Both have regression tests.
 
 ## The multi-agent layer
 
@@ -132,6 +171,8 @@ app/
   pipeline/     the ADK Workflow graph
   api/          FastAPI routes, session auth, role-shaped views
   static/       the three interfaces
+  db.py         schema (SQLAlchemy Core); migrations/ holds the Alembic history
+  worker.py     pipeline worker;  cli.py  operator commands
 docs/           architecture, threat model, model card, data card, responsible AI, eval report
 ```
 
@@ -165,5 +206,5 @@ Read [docs/EVAL_REPORT.md](docs/EVAL_REPORT.md) before believing any number in i
 perfect because the statements are synthetic and the parser was written against that layout; they
 demonstrate that the wiring is correct, not that the system is accurate on real documents. The
 scorecard weights are hand-set for plausible behaviour, not fitted to repayment outcomes — no real
-default data exists here. The case store is in-memory. The demo sign-in is not authentication. None of
+default data exists here. Staff have passwords but no MFA or SSO yet. None of
 this is a lending decision system, and it must not be used as one.

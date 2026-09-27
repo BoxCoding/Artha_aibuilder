@@ -1,6 +1,6 @@
 # ARTHA evaluation report
 
-Generated 2026-09-26 on a labelled synthetic population of 100 statements (18367 transaction rows). Every statement is produced by `app/synthetic/generator.py`, which records exactly what it altered, so these are measurements against ground truth rather than self-assessment. Rates on a synthetic population are an engineering signal, not evidence of real-world accuracy.
+Generated 2026-09-27 on a labelled synthetic population of 120 statements (22439 transaction rows). Every statement is produced by `app/synthetic/generator.py`, which records exactly what it altered, so these are measurements against ground truth rather than self-assessment. Rates on a synthetic population are an engineering signal, not evidence of real-world accuracy.
 
 ## Results
 
@@ -13,24 +13,24 @@ Generated 2026-09-26 on a labelled synthetic population of 100 statements (18367
 | Memo claims with resolvable citations | 1.0 | >= 1.0 | pass |
 | Approvals over a severe integrity finding | 0 | <= 0 | pass |
 
-Median case latency 447.7 ms, 95th percentile 641.5 ms, deterministic path only (no model calls).
+Median case latency 309.6 ms, 95th percentile 389.4 ms, deterministic path only (no model calls).
 
 ## Recall by tampering pattern
 
 | Pattern | Cases | Recall |
 | --- | --- | --- |
-| editor_resave | 25 | 1.0 |
-| inflate_recomputed | 15 | 1.0 |
-| inflate_row_only | 11 | 1.0 |
-| injection | 16 | 1.0 |
+| editor_resave | 29 | 1.0 |
+| inflate_recomputed | 16 | 1.0 |
+| inflate_row_only | 13 | 1.0 |
+| injection | 19 | 1.0 |
 
 `inflate_recomputed` is the hard case: the forger repairs every later balance, so reconciliation passes and detection rests on the font trace alone. `editor_resave` on its own is deliberately treated as medium severity — re-saving a PDF is common and innocent — so it refers for verification rather than counting as a severe finding.
 
 ## Distribution
 
-Bands: {"B": 45, "C": 23, "D": 17, "E": 15}
+Bands: {"B": 52, "C": 27, "D": 22, "E": 19}
 
-Recommendations: {"APPROVE": 21, "APPROVE_WITH_CONDITIONS": 9, "DECLINE": 10, "REFER": 4, "REFER_INTEGRITY_REVIEW": 56}
+Recommendations: {"APPROVE": 24, "APPROVE_WITH_CONDITIONS": 12, "DECLINE": 12, "REFER": 8, "REFER_INTEGRITY_REVIEW": 64}
 
 ## Why these numbers are optimistic
 

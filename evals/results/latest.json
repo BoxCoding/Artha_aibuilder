@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-09-26",
-  "population": 100,
-  "memo_sample": 20,
+  "generated_at": "2026-09-27",
+  "population": 120,
+  "memo_sample": 25,
   "tamper_recall": 1.0,
   "tamper_false_positive_rate": 0.0,
   "row_accuracy": 1.0,
@@ -10,14 +10,14 @@
   "critic_issues_on_offline_memos": 0,
   "unsafe_approvals": 0,
   "unsafe_examples": [],
-  "median_case_ms": 447.7,
-  "p95_case_ms": 641.5,
+  "median_case_ms": 309.6,
+  "p95_case_ms": 389.4,
   "counts": {
-    "tampered": 56,
-    "clean": 44,
-    "claims": 255,
-    "injections": 16,
-    "rows": 18367
+    "tampered": 64,
+    "clean": 56,
+    "claims": 317,
+    "injections": 19,
+    "rows": 22439
   },
   "recall_by_pattern": {
     "editor_resave": 1.0,
@@ -26,22 +26,22 @@
     "injection": 1.0
   },
   "pattern_counts": {
-    "editor_resave": 25,
-    "inflate_recomputed": 15,
-    "inflate_row_only": 11,
-    "injection": 16
+    "editor_resave": 29,
+    "inflate_recomputed": 16,
+    "inflate_row_only": 13,
+    "injection": 19
   },
   "band_distribution": {
-    "B": 45,
-    "C": 23,
-    "D": 17,
-    "E": 15
+    "B": 52,
+    "C": 27,
+    "D": 22,
+    "E": 19
   },
   "outcome_distribution": {
-    "APPROVE": 21,
-    "APPROVE_WITH_CONDITIONS": 9,
-    "DECLINE": 10,
-    "REFER": 4,
-    "REFER_INTEGRITY_REVIEW": 56
+    "APPROVE": 24,
+    "APPROVE_WITH_CONDITIONS": 12,
+    "DECLINE": 12,
+    "REFER": 8,
+    "REFER_INTEGRITY_REVIEW": 64
   }
 }
