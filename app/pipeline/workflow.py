@@ -32,7 +32,7 @@ from app.config import get_settings
 from app.documents.ingest import attach_parsed_statement
 from app.documents.pdf_reader import read_statement
 from app.domain.models import Case, CaseStatus, PipelineEvent, Signal
-from app.domain.store import InMemoryStore, get_store
+from app.domain.store import CaseNotFound, CaseStore, get_store
 from app.forensics.rules import run_rules
 from app.risk.engine import apply_policy, challenge_score, improvement_plan, score
 from app.security.injection import detect
@@ -61,7 +61,7 @@ class UserFacingError(RuntimeError):
 @dataclass
 class RunContext:
     case: Case
-    store: InMemoryStore
+    store: CaseStore
     meter: UsageMeter
     files: dict[str, bytes]
     forensic_signals: list[Signal] = field(default_factory=list)
@@ -72,9 +72,16 @@ class RunContext:
 _RUNS: dict[str, RunContext] = {}
 
 
+class CaseDeleted(RuntimeError):
+    """The case was erased (deletion right or retention) while the pipeline was running."""
+
+
 def _publish(rc: RunContext) -> None:
     rc.case.token_usage = rc.meter.used
-    rc.store.replace(rc.case.model_copy(deep=True))
+    try:
+        rc.store.replace(rc.case.model_copy(deep=True))
+    except CaseNotFound as exc:
+        raise CaseDeleted(rc.case.case_id) from exc
 
 
 def step(name: str) -> Callable[[Callable[[RunContext], Awaitable[dict[str, str | int | float] | None]]], object]:
@@ -94,6 +101,8 @@ def step(name: str) -> Callable[[Callable[[RunContext], Awaitable[dict[str, str 
                 detail["tokens"] = rc.meter.used - tokens_before
                 rc.case.events.append(PipelineEvent(step=name, label=STEP_LABELS[name], status="completed",
                                                     duration_ms=int((time.monotonic() - started) * 1000), detail=detail))
+            except CaseDeleted:
+                raise
             except Exception as exc:  # noqa: BLE001 - convert every failure into a recorded, safe state
                 safe = str(exc) if isinstance(exc, UserFacingError) else "An internal error stopped automatic processing."
                 log.exception("pipeline_step_failed", extra={"step": name, "case_id": rc.case.case_id})
@@ -246,7 +255,8 @@ def build_workflow() -> Workflow:
 
 # --------------------------------------------------------------------------- runner
 
-async def run_case(case_id: str, store: InMemoryStore | None = None) -> Case:
+async def run_case(case_id: str, store: CaseStore | None = None) -> Case | None:
+    """Run the full pipeline for one case. Returns None if the case was deleted mid-run."""
     store = store or get_store()
     settings = get_settings()
     with store.mutate(case_id) as live:
@@ -266,6 +276,9 @@ async def run_case(case_id: str, store: InMemoryStore | None = None) -> Case:
         message = types.Content(role="user", parts=[types.Part(text=f"process case {case_id}")])
         async for _event in runner.run_async(user_id="pipeline", session_id=session.id, new_message=message):
             pass
+    except CaseDeleted:
+        log.info("case_deleted_during_pipeline", extra={"case_id": case_id})
+        return None
     except Exception:  # noqa: BLE001
         log.exception("workflow_crashed", extra={"case_id": case_id})
         rc.failed = rc.failed or "Automatic processing stopped unexpectedly."
@@ -277,16 +290,41 @@ async def run_case(case_id: str, store: InMemoryStore | None = None) -> Case:
     elif rc.case.status != CaseStatus.READY_FOR_REVIEW:
         rc.case.status = CaseStatus.NEEDS_MANUAL_PROCESSING
         rc.case.failure_reason = "Automatic processing did not complete."
-    _publish(rc)
+    try:
+        _publish(rc)
+    except CaseDeleted:
+        return None
     return store.get(case_id)
+
+
+def mark_needs_manual(case_id: str, reason: str, store: CaseStore | None = None) -> None:
+    """Park a case for a person when automatic processing cannot finish, whatever the cause."""
+    store = store or get_store()
+    try:
+        with store.mutate(case_id) as live:
+            if live.status == CaseStatus.PROCESSING:
+                live.status = CaseStatus.NEEDS_MANUAL_PROCESSING
+                live.failure_reason = reason
+    except CaseNotFound:
+        pass
 
 
 _executor: ThreadPoolExecutor | None = None
 
 
-def submit_case(case_id: str) -> None:
-    """Run the pipeline on a worker thread with its own event loop, off the API loop."""
+def submit_case(case_id: str) -> str:
+    """Hand a case to the pipeline.
+
+    queue mode (production): write a durable job for `python -m app.worker` to claim.
+    inline mode (development): run on a thread with its own event loop, off the API loop.
+    """
+    settings = get_settings()
+    if settings.pipeline_mode == "queue":
+        from app.pipeline.jobs import get_queue
+
+        return get_queue().enqueue(case_id)
     global _executor
     if _executor is None:
         _executor = ThreadPoolExecutor(max_workers=get_settings().pipeline_concurrency, thread_name_prefix="pipeline")
     _executor.submit(asyncio.run, run_case(case_id))
+    return "inline"

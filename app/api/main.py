@@ -21,17 +21,18 @@ from fastapi.staticfiles import StaticFiles
 
 from app.ai.explain import build_explanation, coach_reply
 from app.ai.gateway import UsageMeter, get_gateway
-from app.api.security import (DEMO_USERS, Principal, authorise_case, clear_session, current_principal, issue_session,
-                              limiter, require_roles, validate_upload)
+from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
+                              enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
 from app.api.views import (CallbackRequest, CoachRequest, CopilotRequest, CreateCaseRequest, DecisionRequest,
-                           LoginRequest, case_view, staff_view)
+                           LoginRequest, RegisterRequest, case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
 from app.documents.render import render_crop, render_page_png
 from app.domain.models import (OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Document, Explanation, Outcome, Role)
 from app.domain.store import CaseNotFound, get_store
-from app.pipeline.workflow import submit_case
+from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, get_accounts
+from app.pipeline.workflow import mark_needs_manual, submit_case
 from app.synthetic.generator import PERSONAS, persona_statement, render_pdf
 
 log = logging.getLogger("artha.api")
@@ -48,11 +49,20 @@ _ready = {"value": False}
 async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
     """Start: configure logging and the receipt key, then report ready. Stop: drain cleanly."""
     global _signer
-    settings = get_settings()
-    configure_logging("INFO" if settings.app_env == "prod" else "DEBUG")
+    settings = get_settings()  # raises ConfigurationError on an unsafe production configuration
+    configure_logging("INFO" if settings.is_prod else "DEBUG")
+    if settings.database_url and settings.database_url.startswith("sqlite"):
+        # Local single-process convenience. PostgreSQL schemas are managed by Alembic (`alembic upgrade head`).
+        from app.db import get_engine, metadata
+
+        metadata.create_all(get_engine())
+    get_accounts()  # seeds demo accounts when demo mode is on
     seed = settings.receipt_signing_seed.get_secret_value() if settings.receipt_signing_seed else None
     _signer = ReceiptSigner(seed)
-    log.info("startup", extra={"detail": f"ai_mode={settings.llm_mode} receipt_key={_signer.key_id}"})
+    log.info("startup", extra={"detail": f"env={settings.app_env} ai_mode={settings.llm_mode} "
+                                         f"pipeline={settings.pipeline_mode} "
+                                         f"store={'sql' if settings.database_url else 'memory'} "
+                                         f"receipt_key={_signer.key_id}"})
     _ready["value"] = True
     try:
         yield
@@ -76,12 +86,20 @@ def signer() -> ReceiptSigner:
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
-    token = request_id_var.set(request.headers.get("X-Request-Id", "")[:40] or new_request_id())
+    token = request_id_var.set(_safe_request_id(request.headers.get("X-Request-Id", "")) or new_request_id())
     started = datetime.now(timezone.utc)
-    try:
-        response: Response = await call_next(request)
-    finally:
-        pass
+    settings = get_settings()
+    if request.url.path.startswith("/api") and not origin_allowed(request, settings):
+        response: Response = JSONResponse({"detail": "Cross-site request refused."},
+                                          status_code=status.HTTP_403_FORBIDDEN)
+    else:
+        try:
+            response = await call_next(request)
+        except Exception:  # noqa: BLE001 - never leak a stack trace, always return the request id
+            log.exception("unhandled_error", extra={"route": request.url.path, "method": request.method})
+            response = JSONResponse({"detail": "Something went wrong on our side. Quote this reference if you "
+                                               f"contact support: {request_id_var.get()}"},
+                                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     response.headers["X-Request-Id"] = request_id_var.get()
     if request.url.path.startswith("/api"):
         log.info("request", extra={"route": request.url.path, "method": request.method,
@@ -96,9 +114,15 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
         "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
         "Cache-Control": "no-store" if request.url.path.startswith("/api") else "private, max-age=300",
     })
-    if get_settings().app_env == "prod":
+    if settings.is_prod:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+def _safe_request_id(value: str) -> str:
+    """Accept a caller's correlation id only if it is short and boring; it ends up in every log line."""
+    value = value[:40]
+    return value if value and all(c.isalnum() or c in "-_." for c in value) else ""
 
 
 @app.exception_handler(CaseNotFound)
@@ -108,21 +132,68 @@ async def case_not_found(_request: Request, _exc: CaseNotFound) -> JSONResponse:
 
 # --------------------------------------------------------------------------- session
 
-@app.post("/api/session")
-async def sign_in(payload: LoginRequest, response: Response) -> dict[str, Any]:
+@app.get("/api/config")
+async def public_config() -> dict[str, Any]:
+    """What the sign-in page needs before anyone is signed in."""
     settings = get_settings()
-    entry = DEMO_USERS.get(payload.email.strip().lower())
-    if not entry or not settings.demo_mode:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown sign-in. Pick one of the demo roles.")
-    name, role = entry
-    principal = Principal(uid=payload.email.strip().lower(), name=name, role=role)
-    issue_session(response, principal, settings)
-    get_store().audit(principal.uid, role.value, "SIGN_IN", "session", {})
-    return {"uid": principal.uid, "name": name, "role": role.value}
+    demo = settings.demo_mode and not settings.is_prod
+    return {
+        "demo_mode": demo,
+        "registration": settings.allow_self_registration,
+        "password_min_length": settings.password_min_length,
+        "languages": settings.supported_languages,
+        "demo_users": [{"email": e, "name": n, "role": r.value} for e, (n, r) in DEMO_ACCOUNTS.items()] if demo else [],
+    }
+
+
+@app.post("/api/session")
+async def sign_in(payload: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
+    settings = get_settings()
+    email = payload.email.strip().lower()
+    ip = client_ip(request, settings)
+    enforce(f"login-ip:{ip}", 30, 300)
+    enforce(f"login-email:{email}", 10, 300)
+    try:
+        user = await asyncio.to_thread(get_accounts().authenticate, email, payload.password,
+                                       demo_mode=settings.demo_mode and not settings.is_prod)
+    except AuthError as exc:
+        get_store().audit("anonymous", "none", "SIGN_IN_FAILED", "session", {"email_sha": _digest(email)})
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+    issue_session(response, user, settings)
+    get_store().audit(user.uid, user.role.value, "SIGN_IN", "session", {"demo": user.is_demo})
+    return {"uid": user.uid, "name": user.name, "role": user.role.value}
+
+
+@app.post("/api/register", status_code=status.HTTP_201_CREATED)
+async def register(payload: RegisterRequest, request: Request, response: Response) -> dict[str, Any]:
+    """Borrower self-registration. Staff accounts are created with `python -m app.cli create-user`."""
+    settings = get_settings()
+    if not settings.allow_self_registration:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed.")
+    enforce(f"register-ip:{client_ip(request, settings)}", 5, 3600)
+    try:
+        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password)
+    except AccountExists as exc:
+        # Deliberately the same shape as a validation error; the audit log records what happened.
+        get_store().audit("anonymous", "none", "REGISTER_DUPLICATE", "account", {"email_sha": _digest(payload.email)})
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists. Sign in instead.") from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    issue_session(response, user, settings)
+    get_store().audit(user.uid, user.role.value, "REGISTER", "account", {})
+    return {"uid": user.uid, "name": user.name, "role": user.role.value}
 
 
 @app.delete("/api/session")
-async def sign_out(response: Response) -> dict[str, str]:
+async def sign_out(request: Request, response: Response) -> dict[str, str]:
+    """Signing out revokes every session for the account, not just this cookie."""
+    if request.cookies.get(COOKIE_NAME):
+        try:
+            principal = current_principal(request, get_settings())
+            await asyncio.to_thread(get_accounts().revoke_sessions, principal.uid)
+            get_store().audit(principal.uid, principal.role.value, "SIGN_OUT", "session", {})
+        except HTTPException:
+            pass  # already invalid; clearing the cookie is all that is left to do
     clear_session(response)
     return {"status": "signed_out"}
 
@@ -131,8 +202,13 @@ async def sign_out(response: Response) -> dict[str, str]:
 async def me(principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     settings = get_settings()
     return {"uid": principal.uid, "name": principal.name, "role": principal.role.value,
-            "ai_mode": settings.llm_mode, "languages": settings.supported_languages,
-            "demo_users": [{"email": e, "name": n, "role": r.value} for e, (n, r) in DEMO_USERS.items()]}
+            "ai_mode": settings.llm_mode, "languages": settings.supported_languages}
+
+
+def _digest(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.strip().lower().encode()).hexdigest()[:16]
 
 
 # --------------------------------------------------------------------------- borrower flow
@@ -160,17 +236,15 @@ async def upload_document(case_id: str, file: UploadFile = File(...),
     store = get_store()
     case = store.get(case_id)
     authorise_case(case, principal)
-    if case.status not in (CaseStatus.DRAFT,):
-        raise HTTPException(status.HTTP_409_CONFLICT, "This application has already been submitted.")
-    if len(case.documents) >= settings.max_documents_per_case:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {settings.max_documents_per_case} statements per application.")
+    _check_can_attach(case, settings.max_documents_per_case)
     data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
-    validate_upload(file.filename or "statement.pdf", data, settings)
+    await asyncio.to_thread(validate_upload, file.filename or "statement.pdf", data, settings)
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    await asyncio.to_thread(store.put_file, case_id, doc_id, data)
     with store.mutate(case_id) as live:
+        _check_can_attach(live, settings.max_documents_per_case)  # re-checked under the row lock
         live.documents.append(Document(doc_id=doc_id, filename=Path(file.filename or "statement.pdf").name[:80],
                                        sha256="", size_bytes=len(data), page_count=0))
-    store.put_file(case_id, doc_id, data)
     store.audit(principal.uid, principal.role.value, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}", {"bytes": len(data)})
     return {"doc_id": doc_id, "filename": file.filename}
 
@@ -178,18 +252,23 @@ async def upload_document(case_id: str, file: UploadFile = File(...),
 @app.post("/api/cases/{case_id}/sample")
 async def attach_sample(case_id: str, persona: str = Body(embed=True),
                         principal: Principal = Depends(limiter(20))) -> dict[str, Any]:
-    """Attach a generated sample statement, so the flow can be demonstrated without a real document."""
+    """Attach a generated sample statement, so the flow can be demonstrated without a real document.
+    Demo mode only: a production lender must never accept a statement it generated itself."""
+    if not get_settings().demo_mode or get_settings().is_prod:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found.")
     if persona not in PERSONAS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown sample.")
     store = get_store()
     case = store.get(case_id)
     authorise_case(case, principal)
+    _check_can_attach(case, get_settings().max_documents_per_case)
     data = await asyncio.to_thread(lambda: render_pdf(persona_statement(persona)))
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
+    await asyncio.to_thread(store.put_file, case_id, doc_id, data)
     with store.mutate(case_id) as live:
+        _check_can_attach(live, get_settings().max_documents_per_case)
         live.documents.append(Document(doc_id=doc_id, filename=f"{persona}-statement.pdf", sha256="",
                                        size_bytes=len(data), page_count=0))
-    store.put_file(case_id, doc_id, data)
     store.audit(principal.uid, principal.role.value, "ATTACH_SAMPLE", f"{case_id}/{doc_id}", {"persona": persona})
     return {"doc_id": doc_id, "filename": f"{persona}-statement.pdf", "size_bytes": len(data)}
 
@@ -197,15 +276,32 @@ async def attach_sample(case_id: str, persona: str = Body(embed=True),
 @app.post("/api/cases/{case_id}/submit")
 async def submit(case_id: str, principal: Principal = Depends(limiter(20))) -> dict[str, Any]:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
-    if not case.documents:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add at least one bank statement before submitting.")
-    if case.status not in (CaseStatus.DRAFT, CaseStatus.NEEDS_MANUAL_PROCESSING):
-        raise HTTPException(status.HTTP_409_CONFLICT, "This application is already being processed.")
-    store.audit(principal.uid, principal.role.value, "SUBMIT_CASE", case_id, {"documents": len(case.documents)})
-    submit_case(case_id)
-    return {"status": "processing"}
+    authorise_case(store.get(case_id), principal)
+    with store.mutate(case_id) as live:  # check-and-set under the row lock: a double click queues once
+        if not live.documents:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add at least one bank statement before submitting.")
+        if live.status not in (CaseStatus.DRAFT, CaseStatus.NEEDS_MANUAL_PROCESSING):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This application is already being processed.")
+        live.status = CaseStatus.PROCESSING
+        live.failure_reason = None
+        live.events = []
+        documents = len(live.documents)
+    store.audit(principal.uid, principal.role.value, "SUBMIT_CASE", case_id, {"documents": documents})
+    try:
+        job = await asyncio.to_thread(submit_case, case_id)
+    except Exception as exc:
+        log.exception("submit_failed", extra={"case_id": case_id})
+        await asyncio.to_thread(mark_needs_manual, case_id, "The application could not be queued. Please try again.")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "We could not start processing just now. Please try again in a minute.") from exc
+    return {"status": "processing", "job": job}
+
+
+def _check_can_attach(case: Case, limit: int) -> None:
+    if case.status != CaseStatus.DRAFT:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This application has already been submitted.")
+    if len(case.documents) >= limit:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {limit} statements per application.")
 
 
 @app.get("/api/cases/{case_id}")
@@ -224,9 +320,19 @@ async def case_events(case_id: str, principal: Principal = Depends(current_princ
     authorise_case(store.get(case_id), principal)
 
     async def stream():  # type: ignore[no-untyped-def]
-        seen = 0
-        for _ in range(600):  # ~120 s ceiling
-            case = store.get(case_id)
+        seen, marker = 0, -1
+        for _ in range(600):  # ~120 s ceiling; the client reconnects or falls back to polling
+            try:
+                current = await asyncio.to_thread(store.change_marker, case_id)
+            except CaseNotFound:
+                yield "event: gone\ndata: {}\n\n"
+                return
+            if current == marker:
+                yield ": keep-alive\n\n"
+                await asyncio.sleep(0.4)
+                continue
+            marker = current
+            case = await asyncio.to_thread(store.get, case_id)
             events = case.events
             while seen < len(events):
                 payload = events[seen].model_dump(mode="json")
@@ -237,7 +343,7 @@ async def case_events(case_id: str, principal: Principal = Depends(current_princ
                 final = case_view(case, principal.role, explanation)
                 yield f"event: done\ndata: {json.dumps(final, default=str)}\n\n"
                 return
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.4)
         yield "event: timeout\ndata: {}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
@@ -275,15 +381,8 @@ async def request_callback(case_id: str, payload: CallbackRequest,
 
 @app.get("/api/queue")
 async def queue(principal: Principal = Depends(require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> dict[str, Any]:
-    cases = sorted(get_store().list(), key=lambda c: c.updated_at, reverse=True)
-    return {"cases": [{
-        "case_id": c.case_id, "business_name": c.business_name, "status": c.status.value,
-        "requested_amount": str(c.requested_amount), "updated_at": c.updated_at,
-        "band": c.score.band if c.score else None,
-        "recommendation": c.policy.outcome.value if c.policy else None,
-        "integrity_findings": sum(1 for s in c.signals if s.category == "FRAUD" and s.severity in ("HIGH", "CRITICAL")),
-        "awaiting_second_approval": c.status == CaseStatus.PENDING_SECOND_APPROVAL,
-    } for c in cases if c.status != CaseStatus.DRAFT]}
+    rows = await asyncio.to_thread(get_store().list_queue, get_settings().queue_page_size)
+    return {"cases": rows}
 
 
 @app.get("/api/cases/{case_id}/documents/{doc_id}/pages/{page}")
@@ -329,53 +428,63 @@ async def copilot(case_id: str, payload: CopilotRequest,
 async def decide(case_id: str, payload: DecisionRequest,
                  principal: Principal = Depends(require_roles(Role.UNDERWRITER))) -> dict[str, Any]:
     store = get_store()
-    case = store.get(case_id)
-    if case.status not in DECIDABLE:
-        raise HTTPException(status.HTTP_409_CONFLICT, "This case is not open for a decision.")
-    if not case.policy:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Analysis has not finished for this case.")
     try:
         outcome = Outcome(payload.outcome)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown outcome.") from exc
 
-    override = outcome != case.policy.outcome
-    if override and not (payload.reason and payload.reason.strip()):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                            "Give a reason when your decision differs from the recommendation.")
-    amount = Decimal(payload.approved_amount) if payload.approved_amount else None
-    if outcome.value.startswith("APPROVE"):
-        amount = amount or case.policy.recommended_amount
-        if amount <= 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Set an approved amount above zero.")
-    else:
-        amount = None
+    # The whole check-and-set runs under the case's row lock, so two underwriters acting at once
+    # cannot both be "first", and nobody can countersign a proposal that has just changed.
+    with store.mutate(case_id) as live:
+        if live.status not in DECIDABLE:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This case is not open for a decision.")
+        if not live.policy:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Analysis has not finished for this case.")
+        policy = live.policy
+        override = outcome != policy.outcome
+        if override and not (payload.reason and payload.reason.strip()):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Give a reason when your decision differs from the recommendation.")
+        amount = Decimal(payload.approved_amount) if payload.approved_amount else None
+        if outcome.value.startswith("APPROVE"):
+            amount = amount or policy.recommended_amount
+            if amount <= 0:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Set an approved amount above zero.")
+            if amount > live.requested_amount:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "The approved amount cannot exceed the amount requested.")
+        else:
+            amount = None
 
-    four_eyes = amount is not None and amount > Decimal(str(_four_eyes_threshold(case)))
-    pending = case.pending_decision
-    if four_eyes and not (pending and pending.decided_by != principal.uid):
-        decision = Decision(decision_id=f"dec-{uuid.uuid4().hex[:8]}", system_recommendation=case.policy.outcome,
-                            final_outcome=outcome, approved_amount=amount, conditions=list(case.policy.conditions),
-                            override=override, reason=payload.reason, decided_by=principal.uid)
-        with store.mutate(case_id) as live:
-            live.pending_decision = decision
+        four_eyes = amount is not None and amount > Decimal(str(_four_eyes_threshold(live)))
+        pending = live.pending_decision
+        countersigning = (four_eyes and pending is not None and pending.decided_by != principal.uid
+                          and pending.final_outcome == outcome and pending.approved_amount == amount)
+        if four_eyes and not countersigning:
+            live.pending_decision = Decision(
+                decision_id=f"dec-{uuid.uuid4().hex[:8]}", system_recommendation=policy.outcome,
+                final_outcome=outcome, approved_amount=amount, conditions=list(policy.conditions),
+                override=override, reason=payload.reason, decided_by=principal.uid)
             live.status = CaseStatus.PENDING_SECOND_APPROVAL
+            recorded = False
+        else:
+            live.decision = Decision(
+                decision_id=f"dec-{uuid.uuid4().hex[:8]}", system_recommendation=policy.outcome,
+                final_outcome=outcome, approved_amount=amount, conditions=list(policy.conditions),
+                override=override, reason=(pending.reason if countersigning and pending else None) or payload.reason,
+                decided_by=(pending.decided_by if countersigning and pending else principal.uid),
+                second_approver=principal.uid if countersigning else None)
+            live.pending_decision = None
+            live.status = OUTCOME_TO_STATUS[outcome]
+            recorded = True
+        second_approver = live.decision.second_approver if recorded and live.decision else None
+
+    if not recorded:
         store.audit(principal.uid, principal.role.value, "DECISION_PROPOSED", case_id,
                     {"outcome": outcome.value, "amount": str(amount), "override": override})
         return {"status": "pending_second_approval", "decided_by": principal.uid}
-
-    decision = Decision(decision_id=f"dec-{uuid.uuid4().hex[:8]}", system_recommendation=case.policy.outcome,
-                        final_outcome=outcome, approved_amount=amount,
-                        conditions=list(case.policy.conditions), override=override, reason=payload.reason,
-                        decided_by=(pending.decided_by if four_eyes and pending else principal.uid),
-                        second_approver=principal.uid if four_eyes else None)
-    with store.mutate(case_id) as live:
-        live.decision = decision
-        live.pending_decision = None
-        live.status = OUTCOME_TO_STATUS[outcome]
     store.audit(principal.uid, principal.role.value, "DECISION_RECORDED", case_id,
                 {"outcome": outcome.value, "amount": str(amount), "override": override,
-                 "second_approver": decision.second_approver})
+                 "second_approver": second_approver})
     await _ensure_explanations(case_id)
     return {"status": "recorded", "outcome": outcome.value}
 
@@ -419,33 +528,35 @@ async def explanation(case_id: str, language: str = "en",
 @app.get("/api/risk/overview")
 async def risk_overview(principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
     store = get_store()
-    cases = [c for c in store.list() if c.score]
-    bands = {b: sum(1 for c in cases if c.score and c.score.band == b) for b in "ABCDE"}
+    summaries = [s for s in await asyncio.to_thread(store.summaries) if s.get("scored")]
+    bands = {b: sum(1 for s in summaries if s.get("band") == b) for b in "ABCDE"}
     outcomes: dict[str, int] = {}
-    for c in cases:
-        if c.policy:
-            outcomes[c.policy.outcome.value] = outcomes.get(c.policy.outcome.value, 0) + 1
-    overrides = [c for c in cases if c.decision and c.decision.override]
     signal_counts: dict[str, int] = {}
-    for c in cases:
-        for s in c.signals:
-            signal_counts[s.code] = signal_counts.get(s.code, 0) + 1
-    memo_stats = [c.memo for c in cases if c.memo]
-    return {
-        "cases_scored": len(cases), "bands": bands, "recommendations": outcomes,
-        "decisions_recorded": sum(1 for c in cases if c.decision), "overrides": len(overrides),
-        "override_examples": [{"case_id": c.case_id, "from": c.decision.system_recommendation.value,
-                               "to": c.decision.final_outcome.value, "reason": c.decision.reason}
-                              for c in overrides[:10] if c.decision],
+    for s in summaries:
+        if s.get("recommendation"):
+            outcomes[s["recommendation"]] = outcomes.get(s["recommendation"], 0) + 1
+        for code in s.get("signal_codes", []):
+            signal_counts[code] = signal_counts.get(code, 0) + 1
+    overrides = [s for s in summaries if s.get("override")]
+    memos = [s["memo"] for s in summaries if s.get("memo")]
+    payload: dict[str, Any] = {
+        "cases_scored": len(summaries), "bands": bands, "recommendations": outcomes,
+        "decisions_recorded": sum(1 for s in summaries if s.get("decided")), "overrides": len(overrides),
+        "override_examples": [{"case_id": s["case_id"]} | s["override"] for s in overrides[:10]],
         "signal_frequency": dict(sorted(signal_counts.items(), key=lambda kv: -kv[1])),
-        "memo_revisions": sum(m.iterations - 1 for m in memo_stats),
-        "claims_dropped_by_gate": sum(len(m.dropped_claims) for m in memo_stats),
-        "critic_issues_open": sum(len(m.critic_issues) for m in memo_stats),
-        "callbacks_requested": len(store.callbacks()),
-        "audit_chain_valid": store.verify_audit_chain(),
-        "audit_tail": [e.model_dump(mode="json") for e in store.audit_events(25)],
+        "memo_revisions": sum(m["revisions"] for m in memos),
+        "claims_dropped_by_gate": sum(m["dropped"] for m in memos),
+        "critic_issues_open": sum(m["critic_issues"] for m in memos),
+        "callbacks_requested": await asyncio.to_thread(store.callback_count),
+        "audit_chain_valid": await asyncio.to_thread(store.verify_audit_chain),
+        "audit_tail": [e.model_dump(mode="json") for e in await asyncio.to_thread(store.audit_events, 25)],
         "ai_mode": get_settings().llm_mode,
     }
+    if get_settings().pipeline_mode == "queue":
+        from app.pipeline.jobs import get_queue
+
+        payload["pipeline_jobs"] = await asyncio.to_thread(get_queue().depth)
+    return payload
 
 
 @app.get("/api/healthz")
@@ -456,9 +567,11 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/api/readyz")
 async def readyz() -> Response:
-    """Readiness: startup finished and the receipt key exists. Cloud Run withholds traffic until this passes."""
+    """Readiness: startup finished, the receipt key exists and the database answers."""
     if not _ready["value"]:
         return JSONResponse({"status": "starting"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if not await asyncio.to_thread(get_store().ping):
+        return JSONResponse({"status": "database_unavailable"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     return JSONResponse({"status": "ready", "receipt_key_id": signer().key_id,
                          "ephemeral_receipt_key": signer().ephemeral})
 
@@ -487,9 +600,10 @@ async def issue_receipt(case_id: str, principal: Principal = Depends(limiter(30)
 
 
 @app.post("/api/receipts/verify")
-async def verify_receipt_endpoint(receipt: dict[str, Any] = Body(...)) -> dict[str, Any]:
+async def verify_receipt_endpoint(request: Request, receipt: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Verify a receipt. Deliberately unauthenticated: a receipt is worthless if checking it
-    requires an account with the party that issued it."""
+    requires an account with the party that issued it. Rate-limited per address instead."""
+    enforce(f"verify-ip:{client_ip(request, get_settings())}", 60, 60)
     ok, reason = verify_receipt(receipt)
     issued_by_us = receipt.get("public_key") == signer().public_key_b64
     return {"valid": ok, "reason": reason, "issued_by_this_service": issued_by_us,

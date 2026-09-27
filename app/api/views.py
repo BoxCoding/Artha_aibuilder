@@ -20,7 +20,15 @@ def effective_rate(case: Case) -> Any:
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(max_length=120)
+    email: str = Field(max_length=254)
+    # Optional only so demo accounts (demo mode, never production) can sign in with an email alone.
+    password: str | None = Field(default=None, max_length=256)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(max_length=254)
+    name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class CreateCaseRequest(BaseModel):
