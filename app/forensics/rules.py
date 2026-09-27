@@ -76,7 +76,9 @@ def rule_balance_breaks(case: Case) -> list[Signal]:
                 evidence_ids.append(prev.evidence_id)
             evidence_ids.append(row.evidence_id)
         coincides = any(row.txn_id in font_rows or (prev and prev.txn_id in font_rows) for row, prev, _ in found)
-        text_layer = doc.parser == "template"
+        # Both deterministic readers read the PDF's own text layer (and the universal reader proves its reading
+        # by reconciliation), so a break they find is in the document, not in our reading of it.
+        text_layer = doc.parser in ("template", "universal")
         severity = "CRITICAL" if (len(found) >= 2 or coincides) and text_layer else ("HIGH" if text_layer else "MEDIUM")
         first_row, _, first_diff = found[0]
         signals.append(Signal(

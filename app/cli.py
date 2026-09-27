@@ -9,6 +9,7 @@
     list-users
     verify-audit                             recompute the audit hash chain; non-zero exit if broken
     sweep                                    delete cases past the retention window now
+    make-statements [--out DIR]              write a pack of realistic synthetic test statements
 """
 from __future__ import annotations
 
@@ -56,7 +57,22 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list-users")
     sub.add_parser("verify-audit")
     sub.add_parser("sweep")
+    make = sub.add_parser("make-statements")
+    make.add_argument("--out", default="var/samples")
+    make.add_argument("--months", type=int, default=6)
     args = parser.parse_args(argv)
+
+    if args.command == "make-statements":
+        from pathlib import Path
+
+        from app.synthetic.realistic import generate_pack
+
+        pack = generate_pack(Path(args.out), months=args.months)
+        for item in pack:
+            print(f"{item['file']:40} {item['bank_layout']:12} {item['transactions']:>4} rows"
+                  + (f"   password {item['password']}" if item["password"] else ""))
+        print(f"\nWrote {len(pack)} statements, manifest.json and README.txt to {args.out}")
+        return 0
 
     if args.command == "generate-secrets":
         print(f"SECRET_KEY={secrets.token_urlsafe(48)}")

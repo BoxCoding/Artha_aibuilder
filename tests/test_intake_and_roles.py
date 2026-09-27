@@ -345,3 +345,32 @@ def test_the_recommendation_is_published_before_the_memo() -> None:
     body = wait_until_processed(officer, case_id)
     risk = next(p for p in body["progress"] if p["step"] == "risk_engine")
     assert risk["detail"]["outcome"] == body["policy"]["outcome"] and "pd" in risk["detail"]
+
+
+def test_the_synthetic_statement_pack_reads_exactly_and_triggers_what_it_promises(tmp_path) -> None:
+    """`python -m app.cli make-statements` must keep producing files that the readers take exactly and
+    that trip the documented checks - it is what testers and demos rely on."""
+    import json
+
+    from app.documents.ingest import attach_parsed_statement
+    from app.documents.intake import prepare, read_deterministic
+    from app.domain.models import Case
+    from app.forensics.rules import run_rules
+    from app.synthetic.realistic import generate_pack
+
+    manifest = {m["file"]: m for m in generate_pack(tmp_path, months=3)}
+    expect = {"01_clean_upi_business.pdf": set(), "03_tampered_balance.pdf": {"FR-BAL-001"},
+              "04_tampered_font.pdf": {"FR-FONT-001"}, "05_edited_metadata.pdf": {"FR-META-001"}}
+    for name, codes in expect.items():
+        data = (tmp_path / name).read_bytes()
+        parsed, reader = read_deterministic(data)
+        assert reader == "universal" and not parsed.needs_ai, name
+        assert len(parsed.rows) == manifest[name]["transactions"], name
+        assert parsed.account_holder == manifest[name]["use_these_applicant_details"]["full_name"].upper()
+        case = Case(case_id="c", owner_uid="u", business_name="b", requested_amount=Decimal("1"), tenure_months=12)
+        attach_parsed_statement(case, "d1", name, data, parsed, reader)
+        found = {s.code for s in run_rules(case) if s.category == "FRAUD" and s.severity in ("HIGH", "CRITICAL")}
+        assert codes <= found and (codes or not found), (name, found)
+    locked = tmp_path / "02_password_protected.pdf"
+    assert prepare(locked.read_bytes(), manifest["02_password_protected.pdf"]["password"]).decrypted
+    assert json.loads((tmp_path / "manifest.json").read_text())[0]["what_to_expect"]

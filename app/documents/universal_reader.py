@@ -57,8 +57,10 @@ KNOWN_BANKS = (
 # numbers ("000012345") out of the money columns.
 AMOUNT_RE = re.compile(r"^\(?-?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\)?(?:\s*\(?(?:cr|dr)\)?\.?)?$", re.I)
 MARKER_RE = re.compile(r"^\(?(cr|dr|credit|debit|c|d)\)?\.?$", re.I)
-SKIP_LINE_RE = re.compile(r"(closing balance|total|grand total|statement summary|page \d+ of \d+|"
-                          r"carried forward|brought forward|c/f|b/f|end of statement|\*\*\*)", re.I)
+SKIP_LINE_RE = re.compile(r"(closing balance|total|grand total|statement summary|\bpage \d+( of \d+)?\b|"
+                          r"carried forward|brought forward|c/f|b/f|end of statement|\*\*\*|computer generated|"
+                          r"does not require|signature|\bdr count\b|\bcr count\b|synthetic test statement|"
+                          r"please (examine|verify)|contents of this statement|registered office)", re.I)
 OPENING_RE = re.compile(r"(opening balance|balance b/f|brought forward|balance forward|b/f)", re.I)
 
 DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%y", "%d/%m/%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y",
@@ -487,11 +489,13 @@ def _read_header_fields(result: ParsedStatement, text: str, meta: dict[str, str]
             result.bank_name = bank
             break
     if result.bank_name is None:
+        author = (meta.get("Author") or "").strip()
         first = text.strip().splitlines()[0].strip() if text.strip() else ""
-        result.bank_name = (first or meta.get("Author") or "")[:60] or None
+        # Banks often set the PDF author to their own name; prefer it when it plausibly is one.
+        result.bank_name = (author if "bank" in author.lower() else first or author)[:60] or None
 
     name_patterns = (r"(?:account holder|account name|a/c name|customer name|name of (?:the )?customer|name)\s*[:\-]?\s*"
-                     r"([A-Z][A-Za-z.&' ]{2,60}?)(?=\s{2,}|\s+(?:account|a/c|address|cust|period|statement|branch|ifsc|from)\b|$)")
+                     r"([A-Z][A-Za-z.&' ]{2,60}?)(?=\s{2,}|\s+(?:account|a/c|address|cust\w*|period|statement|branch|ifsc|from)\b|$)")
     if m := re.search(name_patterns, flat, re.I):
         result.account_holder = m.group(1).strip(" .:-")
     if m := re.search(r"(?:account|a/c)\s*(?:no|number|#)\.?\s*[:\-]?\s*[X*x\d\- ]*?(\d{4})\b", flat, re.I):
