@@ -20,7 +20,7 @@ from app.domain.kyc import ApplicantProfile, valid_gstin
 from app.domain.models import Role
 from app.domain.users import get_accounts
 from tests.bank_layouts import LAYOUTS, make_transactions, render, statement
-from tests.conftest import APPLICANT
+from tests.fixtures import APPLICANT
 
 STRONG = "correct horse battery staple"
 
@@ -319,3 +319,29 @@ def test_ollama_outage_falls_back_to_approved_templates(monkeypatch: pytest.Monk
     gateway = LLMGateway(Settings(llm_mode="ollama", _env_file=None))
     explanation = asyncio.run(build_explanation(_decided_case(), "en", gateway, UsageMeter(budget=10_000)))
     assert explanation.author == "templates"
+
+
+def test_memo_quality_gate_rejects_repetitive_narrow_drafts() -> None:
+    from app.ai.memo import clean_questions, quality_gate
+    from app.domain.models import Claim, CreditMemo, MemoSection, Outcome
+
+    repeated = "The monthly surplus is ₹1,72,031, suggesting a reasonable level of financial stability."
+    memo = CreditMemo(version=1, author="ollama", recommended_outcome=Outcome.REFER, sections=[
+        MemoSection(key="summary", title="Summary", claims=[
+            Claim(claim_id=f"c-{i}", text=repeated, evidence_ids=["ev-computed-inflow"]) for i in range(4)])])
+    gated, reason = quality_gate(memo)
+    assert reason and sum(len(s.claims) for s in gated.sections) == 1 and len(gated.dropped_claims) == 3
+    loop = " ".join(["The 'RC-SHORT-HISTORY' signal needs to be analyzed."] * 30)
+    cleaned = clean_questions([loop, loop, "Confirm the GST turnover."])
+    assert len(cleaned) == 2 and len(cleaned[0]) < 120
+
+
+def test_the_recommendation_is_published_before_the_memo() -> None:
+    officer = staff(Role.LOAN_OFFICER)
+    case_id = new_case(officer, APPLICANT | {"full_name": "Priya Nair"})
+    data, _, _ = statement("sbi_like", seed=9, count=140)
+    officer.post(f"/api/cases/{case_id}/documents", files={"file": ("s.pdf", data, "application/pdf")})
+    officer.post(f"/api/cases/{case_id}/submit")
+    body = wait_until_processed(officer, case_id)
+    risk = next(p for p in body["progress"] if p["step"] == "risk_engine")
+    assert risk["detail"]["outcome"] == body["policy"]["outcome"] and "pd" in risk["detail"]

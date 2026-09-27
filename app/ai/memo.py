@@ -8,6 +8,7 @@ attribute - so what the underwriter sees is traceable by construction.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
 from app.ai.schemas import CriticDraft, MemoDraft
 from app.domain.models import Case, Claim, CreditMemo, CriticIssue, MemoSection, Outcome
 from app.risk.engine import load_policy
+
+log = logging.getLogger("artha.memo")
 
 SECTION_TITLES = {
     "summary": "Summary", "cashflow": "Business cash flow", "repayment_capacity": "Repayment capacity",
@@ -234,7 +237,55 @@ def _from_draft(draft: MemoDraft, version: int, author: str = "gemini") -> Credi
                         policy_clause_ids=c.policy_clause_ids) for i, c in enumerate(section.claims[:4])]
         sections.append(MemoSection(key=section.key, title=SECTION_TITLES.get(section.key, section.title), claims=claims))
     return CreditMemo(version=version, author=author, sections=sections,  # type: ignore[arg-type]
-                      recommended_outcome=Outcome(draft.recommended_outcome), open_questions=draft.open_questions[:5])
+                      recommended_outcome=Outcome(draft.recommended_outcome),
+                      open_questions=clean_questions(draft.open_questions))
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9₹%.,]+", text.lower()) if len(w) > 2}
+
+
+def _similar(a: str, b: str, threshold: float = 0.7) -> bool:
+    wa, wb = _words(a), _words(b)
+    return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= threshold
+
+
+def clean_questions(questions: list[str], limit: int = 5, max_chars: int = 280) -> list[str]:
+    """Open questions are free text, so bound them: no run-on loops, no near-repeats."""
+    kept: list[str] = []
+    for question in questions:
+        sentences: list[str] = []
+        for sentence in re.split(r"(?<=[.?!])\s+", " ".join(question.split())):
+            if sentence and not any(_similar(sentence, s) for s in sentences):
+                sentences.append(sentence)
+        text = " ".join(sentences)
+        text = text if len(text) <= max_chars else text[:max_chars].rsplit(" ", 1)[0] + "…"
+        if text and not any(_similar(text, k) for k in kept):
+            kept.append(text)
+    return kept[:limit]
+
+
+def quality_gate(memo: CreditMemo) -> tuple[CreditMemo, str | None]:
+    """Model-agnostic checks a figure whitelist cannot make: repeated claims are removed, and a memo
+    that covers too little of the case is rejected. Returns the memo and, if rejected, why."""
+    seen: list[str] = []
+    for section in memo.sections:
+        kept = []
+        for claim in section.claims:
+            if any(_similar(claim.text, s) for s in seen):
+                memo.dropped_claims.append(claim.claim_id)
+                continue
+            seen.append(claim.text)
+            kept.append(claim)
+        section.claims = kept
+    memo.sections = [s for s in memo.sections if s.claims]
+    covered = {s.key for s in memo.sections}
+    published = sum(len(s.claims) for s in memo.sections)
+    if len(covered) < 3:
+        return memo, f"it covered only {len(covered)} of the memo's sections"
+    if published < max(5, len(memo.dropped_claims)):
+        return memo, f"only {published} of {published + len(memo.dropped_claims)} claims survived review"
+    return memo, None
 
 
 async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, max_iterations: int = 2) -> CreditMemo:
@@ -282,15 +333,17 @@ async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, m
     if memo.author == "offline_composer":
         memo.critic_issues = deterministic_critic(case, memo, bundle)
     gated = groundedness_gate(memo)
-    published = sum(len(s.claims) for s in gated.sections)
-    if memo.author != "offline_composer" and published < max(3, len(gated.dropped_claims)):
-        # The model's draft did not survive review (common with small local models). An underwriter
-        # gets the deterministic memo rather than a thin one, and is told why.
+    if memo.author == "offline_composer":
+        return gated
+    gated, rejected = quality_gate(gated)
+    if rejected:
+        # The model's draft did not meet the bar (common with small local models). The underwriter
+        # gets the deterministic memo rather than a thin or repetitive one, and is told why.
+        log.info("memo_draft_rejected", extra={"case_id": case.case_id, "detail": rejected})
         fallback = compose_offline(case)
         fallback.critic_issues = deterministic_critic(case, fallback, bundle)
-        fallback.open_questions.append(f"The {memo.author} draft lost {len(gated.dropped_claims)} of "
-                                       f"{published + len(gated.dropped_claims)} claims at the groundedness gate; "
-                                       "this memo was composed deterministically instead.")
+        fallback.open_questions.append(f"The {memo.author} model's draft was not used because {rejected}; this memo "
+                                       "was composed deterministically from the same evidence.")
         return groundedness_gate(fallback)
     return gated
 

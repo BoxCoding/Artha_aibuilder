@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import APPLICANT
+from tests.fixtures import APPLICANT
 
 from app.api.main import app
 from app.cashflow.categorise import apply_rules

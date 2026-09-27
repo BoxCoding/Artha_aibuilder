@@ -13,7 +13,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import APPLICANT
+from tests.fixtures import APPLICANT
 from sqlalchemy import update
 
 from app.api.main import app

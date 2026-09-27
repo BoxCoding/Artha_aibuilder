@@ -32,6 +32,7 @@ from app.config import get_settings
 from app.documents.ingest import attach_parsed_statement
 from app.documents.intake import read_deterministic, unreadable_message
 from app.documents.universal_reader import reconciles
+from app.domain.formatting import emi
 from app.domain.models import Case, CaseStatus, PipelineEvent, Signal
 from app.domain.store import CaseNotFound, CaseStore, get_store
 from app.forensics.rules import run_rules
@@ -227,7 +228,19 @@ async def risk_engine(rc: RunContext) -> dict[str, str | int | float]:
     rc.case.policy = apply_policy(rc.case.features, rc.case.signals, result, rc.case.requested_amount,
                                   rc.case.tenure_months, rc.case.jurisdiction)
     rc.case.improvement_plan = improvement_plan(rc.case.features, result)
-    return {"band": result.band, "outcome": rc.case.policy.outcome.value,
+    policy = rc.case.policy
+    # The recommendation is final here; everything after is explanation. Publishing it in the step
+    # detail is what lets the officer see an instant result while the memo is still being written.
+    instant: dict[str, str | int | float] = {"pd": round(result.pd, 4), "tenure": policy.tenure_months}
+    if policy.recommended_amount > 0:
+        instant["amount"] = str(policy.recommended_amount)
+        rate = policy.indicative_annual_rate
+        if rate:
+            instant["rate"] = str(rate)
+            instant["emi"] = str(emi(policy.recommended_amount, rate, policy.tenure_months))
+    instant["reasons"] = ",".join(policy.reason_codes[:4])
+    instant["integrity_findings"] = sum(1 for s in rc.case.signals if s.category == "FRAUD")
+    return instant | {"band": result.band, "outcome": rc.case.policy.outcome.value,
             "ml_pd": str(challenge.get("ml_pd", "n/a")), "models_disagree": str(bool(disagreement))}
 
 
