@@ -11,6 +11,33 @@ transparent policy, and gives a credit officer a recommendation **within seconds
 memo in which every sentence cites a specific row on a specific page. A person sanctions every loan. The
 applicant is told why, in their own language, and is never accused of anything by a machine.
 
+## Problem statement coverage
+
+| Asked for | Where it lives in LedgerLens |
+| --- | --- |
+| **Fraud detection** | Nine forensic rules on the file itself (balance breaks, font changes, editing traces, injection, date and reference anomalies) plus an identity check - `app/forensics/rules.py` |
+| **Transaction anomaly analysis** | Within a statement: statistical outliers, circular transfers, window dressing. Across the portfolio: the same statement, bank account or mobile under different applicants, and application velocity - `app/forensics/network.py` |
+| **Document intelligence** | Deterministic readers for real Indian bank layouts that reconcile every balance, password-protected PDFs, Document AI for scans, model extraction as a checked fallback - `app/documents/` |
+| **Financial assistance** | Customer coach in English, Hindi and Indonesian with a glossary; credit co-pilot with read-only case tools - `app/ai/explain.py`, `app/ai/copilot.py` |
+| **Personalised recommendations** | EMI date matched to the customer's cash-flow peak, structures the policy would approve, concrete targets to reach a better band - `app/advice/recommend.py` |
+| **Compliance automation** | RBI-style Key Fact Statement with APR and customer acceptance gate, AML watchlist and reportable-cash screening, per-case compliance checklist that blocks non-compliant approvals, auditor report with the hash-chained trail - `app/compliance/` |
+| **Risk assessment** | Transparent scorecard, YAML credit policy, learned challenger with disagreement control, instant recommendation in about 2 seconds - `app/risk/` |
+
+| Google Cloud technology | How it is used |
+| --- | --- |
+| **Gemini on Vertex AI** | Memo writing and critique, explanations, co-pilot agent, scan extraction (`LLM_MODE=vertex`) |
+| **BigQuery** | Portfolio analytics over the event stream; SQL views in `analytics/bigquery/` |
+| **Vertex AI (predictive)** | Challenger model served from a Vertex AI endpoint, local artifact as fallback |
+| **Document AI** | Scanned and photographed statements, mapped into the same reconciled reading |
+| **Vertex AI Search** | Policy and procedure retrieval for staff and the co-pilot; customers get the glossary only |
+| **Cloud Run** | API and pipeline worker services, migration job |
+| **Cloud SQL** | PostgreSQL for cases, documents, audit chain, jobs, users, outbox |
+| **Pub/Sub** | Domain events from a transactional outbox; BigQuery subscription feeds analytics |
+
+Every Google Cloud integration is optional and has a local equivalent, so the whole system also runs
+on-premise with a local Gemma model. The cloud adapters are exercised by tests against mocked Google
+APIs; they have not yet been run against a live Google Cloud project.
+
 ## Who uses it
 
 | Role | Does | Sees |

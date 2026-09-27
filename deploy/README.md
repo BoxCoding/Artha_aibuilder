@@ -25,7 +25,8 @@ gcloud artifacts repositories create ledgerlens --repository-format=docker --loc
 # Runtime identity: model access, Cloud SQL, its own secrets. Nothing else.
 gcloud iam service-accounts create ledgerlens-run --display-name="LedgerLens Cloud Run"
 SA=ledgerlens-run@$PROJECT_ID.iam.gserviceaccount.com
-for role in roles/aiplatform.user roles/cloudsql.client; do
+for role in roles/aiplatform.user roles/cloudsql.client roles/pubsub.publisher roles/bigquery.jobUser \
+            roles/bigquery.dataViewer roles/documentai.apiUser roles/discoveryengine.viewer; do
   gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:$SA" --role=$role
 done
 ```
@@ -64,6 +65,49 @@ done
 
 **Keep the receipt seed forever.** Every receipt ever issued is verified against its public key. To
 rotate it, publish the old public key alongside the new one before switching.
+
+## Google Cloud AI and data services
+
+Each is optional: with its setting empty, the local equivalent runs. All calls use the service account;
+there are no API keys.
+
+| Service | What LedgerLens uses it for | Setting |
+| --- | --- | --- |
+| Gemini on Vertex AI | Memo drafting, critic, explanations, co-pilot reasoning, scan extraction | `LLM_MODE=vertex` |
+| Pub/Sub | Domain events (created, scored, fraud flagged, decided, KFS accepted) from the outbox | `EVENT_SINKS=log,pubsub`, `PUBSUB_TOPIC` |
+| BigQuery | Portfolio analytics over the event stream (Pub/Sub BigQuery subscription) | `ANALYTICS_BACKEND=bigquery`, `BIGQUERY_PROJECT` |
+| Document AI | Scanned and photographed statements (Form Parser or Bank Statement Parser) | `DOCUMENT_AI_PROCESSOR` |
+| Vertex AI Search | Policy and procedure retrieval for staff and the co-pilot | `VERTEX_SEARCH_SERVING_CONFIG` |
+| Vertex AI endpoint | Serving the gradient-boosted challenger model | `VERTEX_RISK_ENDPOINT` |
+
+```bash
+# Pub/Sub → BigQuery (see analytics/bigquery/README.md for the table schema and views)
+gcloud pubsub topics create ledgerlens-events
+bq mk --dataset $PROJECT_ID:ledgerlens
+bq mk --table $PROJECT_ID:ledgerlens.events subscription_name:STRING,message_id:STRING,publish_time:TIMESTAMP,data:JSON,attributes:JSON
+gcloud pubsub subscriptions create ledgerlens-events-bq --topic=ledgerlens-events \
+  --bigquery-table=$PROJECT_ID:ledgerlens.events --write-metadata
+sed "s/\${PROJECT}/$PROJECT_ID/g" analytics/bigquery/views.sql | bq query --use_legacy_sql=false
+
+# Document AI: create a Form Parser processor in the console (Document AI → Create processor),
+# then note its resource name: projects/<n>/locations/us/processors/<id>
+
+# Vertex AI Search: create a data store from a Cloud Storage bucket holding your credit policy manual
+# and circulars, attach a search app, and use its serving config:
+# projects/<n>/locations/global/collections/default_collection/engines/<app>/servingConfigs/default_search
+
+# Vertex AI endpoint for the challenger model (scikit-learn prebuilt container)
+gsutil cp app/risk/artifacts/risk_model.joblib gs://$PROJECT_ID-models/risk-gbm-v1/model.joblib
+gcloud ai models upload --region=$REGION --display-name=risk-gbm-v1 \
+  --container-image-uri=asia-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-5:latest \
+  --artifact-uri=gs://$PROJECT_ID-models/risk-gbm-v1
+gcloud ai endpoints create --region=$REGION --display-name=ledgerlens-risk
+gcloud ai endpoints deploy-model <endpoint-id> --region=$REGION --model=<model-id> --display-name=risk-gbm-v1 \
+  --machine-type=n1-standard-2 --min-replica-count=1
+```
+
+Then add the settings to both Cloud Run services, for example:
+`--update-env-vars=EVENT_SINKS=log,pubsub,PUBSUB_TOPIC=projects/$PROJECT_ID/topics/ledgerlens-events,ANALYTICS_BACKEND=bigquery,DOCUMENT_AI_PROCESSOR=...,VERTEX_SEARCH_SERVING_CONFIG=...,VERTEX_RISK_ENDPOINT=...`
 
 ## Optional: Model Armor template
 
