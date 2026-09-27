@@ -12,6 +12,8 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests.conftest import APPLICANT
 from sqlalchemy import update
 
 from app.api.main import app
@@ -35,7 +37,7 @@ def register(client: TestClient, email: str | None = None, password: str = STRON
 
 
 def new_case(client: TestClient) -> str:
-    response = client.post("/api/cases", json={"business_name": "Prod Co", "requested_amount": 200000,
+    response = client.post("/api/cases", json={"applicant": APPLICANT, "business_name": "Prod Co", "requested_amount": 200000,
                                                "tenure_months": 24, "language": "en", "consent": True})
     assert response.status_code == 201, response.text
     return response.json()["case_id"]
@@ -155,11 +157,11 @@ def test_cross_site_writes_are_refused() -> None:
     client = TestClient(app)
     register(client)
     evil = client.post("/api/cases", headers={"Origin": "https://evil.example"},
-                       json={"business_name": "X Co", "requested_amount": 100000, "tenure_months": 24,
+                       json={"applicant": APPLICANT, "business_name": "X Co", "requested_amount": 100000, "tenure_months": 24,
                              "consent": True})
     assert evil.status_code == 403
     same = client.post("/api/cases", headers={"Origin": "http://testserver"},
-                       json={"business_name": "X Co", "requested_amount": 100000, "tenure_months": 24,
+                       json={"applicant": APPLICANT, "business_name": "X Co", "requested_amount": 100000, "tenure_months": 24,
                              "consent": True})
     assert same.status_code == 201
 

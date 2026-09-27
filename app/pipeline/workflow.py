@@ -30,7 +30,8 @@ from app.cashflow.categorise import apply_rules
 from app.cashflow.features import add_computed_evidence, cashflow_signals, compute_features
 from app.config import get_settings
 from app.documents.ingest import attach_parsed_statement
-from app.documents.pdf_reader import read_statement
+from app.documents.intake import read_deterministic, unreadable_message
+from app.documents.universal_reader import reconciles
 from app.domain.models import Case, CaseStatus, PipelineEvent, Signal
 from app.domain.store import CaseNotFound, CaseStore, get_store
 from app.forensics.rules import run_rules
@@ -123,25 +124,34 @@ def step(name: str) -> Callable[[Callable[[RunContext], Awaitable[dict[str, str 
 
 @step("read_documents")
 async def read_documents(rc: RunContext) -> dict[str, str | int | float]:
+    """Deterministic readers first (template, then universal); a model only for what they cannot read,
+    and a model's reading is trusted only if its running balances reconcile."""
     gateway = get_gateway()
     parsers = []
     for doc_id, data in rc.files.items():
-        parsed = await asyncio.to_thread(read_statement, data)
-        parser = "template"
+        parsed, parser = await asyncio.to_thread(read_deterministic, data)
         if parsed.needs_ai:
-            if not gateway.enabled:
-                raise UserFacingError("This statement layout needs Gemini document reading, which is turned off in "
-                                      "this deployment. Use a sample statement or enable AI mode.")
+            problem = unreadable_message(parsed.reason, model_available=gateway.enabled,
+                                         vision_available=gateway.supports_vision)
+            if problem:
+                raise UserFacingError(problem)
             try:
                 parsed = await extract_with_gemini(data, gateway, rc.meter)
             except LLMUnavailable as exc:
-                raise UserFacingError("Gemini could not read this statement. Please upload a clearer copy.") from exc
-            parser = "gemini"
-            if parsed.needs_ai:
-                raise UserFacingError("No transactions could be read from this statement.")
-        filename = next(d.filename for d in rc.case.documents if d.doc_id == doc_id)
+                raise UserFacingError("The AI model could not read this statement. An officer will review it "
+                                      "manually.") from exc
+            parser = gateway.provider
+            if parsed.needs_ai or not reconciles(parsed.rows, parsed.opening_balance):
+                raise UserFacingError("This statement could not be read reliably enough to analyse automatically. "
+                                      "An officer will review it manually.")
+        original = next(d for d in rc.case.documents if d.doc_id == doc_id)
         rc.case.documents = [d for d in rc.case.documents if d.doc_id != doc_id]
-        attach_parsed_statement(rc.case, doc_id, filename, data, parsed, parser)
+        doc = attach_parsed_statement(rc.case, doc_id, original.filename, data, parsed, parser)
+        if original.decrypted:
+            # Forensics and receipts refer to the file the customer actually had, not our decrypted copy.
+            doc.decrypted, doc.source_sha256 = True, original.source_sha256
+            doc.sha256 = original.source_sha256 or doc.sha256
+            doc.metadata, doc.incremental_updates = original.metadata, original.incremental_updates
         parsers.append(parser)
     return {"documents": len(rc.files), "transactions": len(rc.case.transactions), "parser": ",".join(parsers)}
 
@@ -185,7 +195,7 @@ async def forensics(rc: RunContext) -> dict[str, str | int | float]:
     rc.case.signals = signals  # visual inspector uses rule findings to choose crops
     visual = 0
     gateway = get_gateway()
-    if gateway.enabled and all(d.parser == "template" for d in rc.case.documents):
+    if gateway.supports_vision and all(d.parser in ("template", "universal") for d in rc.case.documents):
         try:
             extra = await visual_inspection(rc.case, rc.files, gateway, rc.meter)
             visual = len(extra)

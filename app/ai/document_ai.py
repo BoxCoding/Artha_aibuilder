@@ -6,7 +6,7 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from app.ai.gateway import LLMGateway, UsageMeter
+from app.ai.gateway import Blob, LLMGateway, UsageMeter
 from app.ai.schemas import CategoryBatch, StatementExtraction, VisualReport
 from app.documents.pdf_reader import ParsedRow, ParsedStatement, inspect_structure
 from app.documents.render import render_crop
@@ -32,12 +32,11 @@ def _date(value: str | None) -> date | None:
 
 
 async def extract_with_gemini(data: bytes, gateway: LLMGateway, meter: UsageMeter) -> ParsedStatement:
-    from google.genai import types
-
+    """Model extraction for layouts the deterministic readers cannot place (any configured provider)."""
     meta, incremental, has_js, encrypted, pages = inspect_structure(data)
     result = await gateway.structured(
         prompt_id="doc_intel", schema=StatementExtraction, meter=meter,
-        contents=[types.Part.from_bytes(data=data, mime_type="application/pdf"), "Extract this bank statement."])
+        contents=[Blob(data, "application/pdf"), "Extract this bank statement."])
     parsed = ParsedStatement(page_count=pages, needs_ai=False, metadata=meta, incremental_updates=incremental,
                              has_javascript=has_js, encrypted=encrypted, bank_name=result.bank_name,
                              account_holder=result.account_holder,
@@ -54,7 +53,7 @@ async def extract_with_gemini(data: bytes, gateway: LLMGateway, meter: UsageMete
                                      balance=_dec(t.balance), row_bbox=box or [0, 0, 0, 0], amount_bbox=None,
                                      amount_font=None, amount_size=None, balance_font=None, balance_size=None))
     if not parsed.rows:
-        parsed.needs_ai, parsed.reason = True, "gemini_found_no_transactions"
+        parsed.needs_ai, parsed.reason = True, "model_found_no_transactions"
     return parsed
 
 
@@ -81,9 +80,7 @@ async def categorise_with_gemini(unmatched: list[Transaction], gateway: LLMGatew
 
 async def visual_inspection(case: Case, pdf_by_doc: dict[str, bytes], gateway: LLMGateway,
                             meter: UsageMeter, max_crops: int = 6) -> list[Signal]:
-    """Crop suspicious amount cells plus a few large credits and ask Gemini for visual editing cues."""
-    from google.genai import types
-
+    """Crop suspicious amount cells plus a few large credits and ask a vision model for editing cues."""
     rule_rows = {e for s in case.signals if s.detector == "RULE" and s.category == "FRAUD" for e in s.evidence_ids}
     large = sorted((t for t in case.transactions if t.amount_bbox), key=lambda t: -t.credit)[:3]
     picks: list[Transaction] = []
@@ -100,7 +97,7 @@ async def visual_inspection(case: Case, pdf_by_doc: dict[str, bytes], gateway: L
         png = render_crop(pdf_by_doc[t.doc_id], t.page, row)
         flagged = t.evidence_id in rule_rows or f"{t.evidence_id}-amount" in rule_rows
         contents += [f"crop_id={t.txn_id}; reason={'rule finding' if flagged else 'large deposit'}",
-                     types.Part.from_bytes(data=png, mime_type="image/png")]
+                     Blob(png, "image/png")]
     report = await gateway.structured(prompt_id="visual_inspector", schema=VisualReport, meter=meter, contents=contents)
     by_id = {t.txn_id: t for t in picks}
     signals: list[Signal] = []
@@ -113,5 +110,5 @@ async def visual_inspection(case: Case, pdf_by_doc: dict[str, bytes], gateway: L
             signal_id=f"sig-fr-img-001-{n}", code="FR-IMG-001", category="FRAUD",
             severity="MEDIUM" if corroborated else "LOW", confidence=0.75 if finding.confidence == "high" else 0.55,
             detector="LLM_VISUAL", corroborated=corroborated, evidence_ids=[txn.evidence_id],
-            title="Visual editing cue (Gemini)", explanation=finding.description[:380]))
+            title=f"Visual editing cue ({gateway.provider})", explanation=finding.description[:380]))
     return signals

@@ -15,7 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,8 +23,8 @@ from app.ai.explain import build_explanation, coach_reply
 from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
                               enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
-from app.api.views import (CallbackRequest, CoachRequest, CopilotRequest, CreateCaseRequest, DecisionRequest,
-                           LoginRequest, RegisterRequest, case_view)
+from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
+                           CreateUserRequest, DecisionRequest, LoginRequest, RegisterRequest, case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
@@ -138,6 +138,8 @@ async def public_config() -> dict[str, Any]:
     settings = get_settings()
     demo = settings.demo_mode and not settings.is_prod
     return {
+        "product": "LedgerLens",
+        "needs_setup": await asyncio.to_thread(get_accounts().needs_setup),
         "demo_mode": demo,
         "registration": settings.allow_self_registration,
         "password_min_length": settings.password_min_length,
@@ -198,11 +200,90 @@ async def sign_out(request: Request, response: Response) -> dict[str, str]:
     return {"status": "signed_out"}
 
 
+@app.post("/api/setup", status_code=status.HTTP_201_CREATED)
+async def first_run_setup(payload: CreateUserRequest, request: Request, response: Response) -> dict[str, Any]:
+    """Create the first administrator. Open only until one exists; after that, staff are added by an admin."""
+    settings = get_settings()
+    enforce(f"setup-ip:{client_ip(request, settings)}", 5, 3600)
+    accounts = get_accounts()
+    if not await asyncio.to_thread(accounts.needs_setup):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Setup is already complete. Sign in instead.")
+    try:
+        user = await asyncio.to_thread(accounts.register, payload.email, payload.name, payload.password,
+                                       Role.RISK_ADMIN)
+    except AccountExists as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    issue_session(response, user, settings)
+    get_store().audit(user.uid, user.role.value, "FIRST_ADMIN_CREATED", "account", {})
+    return {"uid": user.uid, "name": user.name, "role": user.role.value}
+
+
+@app.get("/api/admin/users")
+async def list_users(principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
+    users = await asyncio.to_thread(get_accounts().repo.list)
+    return {"users": [{"uid": u.uid, "email": u.email, "name": u.name, "role": u.role.value, "active": u.active,
+                       "demo": u.is_demo, "last_login_at": u.last_login_at, "created_at": u.created_at,
+                       "locked": bool(u.locked_until and u.locked_until > datetime.now(timezone.utc))}
+                      for u in users]}
+
+
+@app.post("/api/admin/users", status_code=status.HTTP_201_CREATED)
+async def create_user(payload: CreateUserRequest,
+                      principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
+    """Add a loan officer, credit officer, administrator or customer account."""
+    enforce(f"admin-create:{principal.uid}", 30, 3600)
+    try:
+        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password,
+                                       payload.role)
+    except AccountExists as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    get_store().audit(principal.uid, principal.role.value, "ACCOUNT_CREATED", user.uid, {"role": user.role.value})
+    return {"uid": user.uid, "email": user.email, "role": user.role.value}
+
+
+@app.post("/api/admin/users/{uid}/{action}")
+async def change_user(uid: str, action: str,
+                      principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, str]:
+    if action not in ("disable", "enable"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found.")
+    if uid == principal.uid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot disable your own account.")
+    try:
+        await asyncio.to_thread(get_accounts().set_active, uid, action == "enable")
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.") from exc
+    get_store().audit(principal.uid, principal.role.value, f"ACCOUNT_{action.upper()}D", uid, {})
+    return {"status": f"{action}d"}
+
+
+@app.post("/api/me/password")
+async def change_password(payload: ChangePasswordRequest, response: Response,
+                          principal: Principal = Depends(limiter(5, 300))) -> dict[str, str]:
+    """Change your own password. Every other session is signed out; this one is re-issued."""
+    accounts = get_accounts()
+    if not await asyncio.to_thread(accounts.verify_password, principal.uid, payload.current_password):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Your current password is not correct.")
+    try:
+        await asyncio.to_thread(accounts.set_password, principal.uid, payload.new_password)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    user = accounts.repo.get(principal.uid)
+    if user:
+        issue_session(response, user, get_settings())
+    get_store().audit(principal.uid, principal.role.value, "PASSWORD_CHANGED", principal.uid, {})
+    return {"status": "changed"}
+
+
 @app.get("/api/me")
 async def me(principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     settings = get_settings()
     return {"uid": principal.uid, "name": principal.name, "role": principal.role.value,
-            "ai_mode": settings.llm_mode, "languages": settings.supported_languages}
+            "ai_mode": settings.llm_mode, "ai": await _ai_status() if principal.role != Role.BORROWER else None,
+            "languages": settings.supported_languages}
 
 
 def _digest(value: str) -> str:
@@ -215,38 +296,76 @@ def _digest(value: str) -> str:
 
 @app.post("/api/cases", status_code=status.HTTP_201_CREATED)
 async def create_case(payload: CreateCaseRequest,
-                      principal: Principal = Depends(limiter(20))) -> dict[str, Any]:
+                      principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
+    """A customer applying for themselves, or a loan officer onboarding a customer (assisted)."""
+    enforce(f"create-case:{principal.uid}", 20, 60)
     if not payload.consent:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Consent is required before documents can be analysed.")
+    assisted = principal.role == Role.LOAN_OFFICER
+    applicant = payload.applicant
     case = Case(case_id=f"case-{uuid.uuid4().hex[:10]}", owner_uid=principal.uid,
-                business_name=payload.business_name.strip(), requested_amount=Decimal(payload.requested_amount),
-                tenure_months=payload.tenure_months, language=payload.language,
-                consent_given_at=datetime.now(timezone.utc), consent_notice_version="consent.v1.2026-09")
+                business_name=(payload.business_name or applicant.business_name).strip(),
+                requested_amount=Decimal(payload.requested_amount), tenure_months=payload.tenure_months,
+                language=payload.language, applicant=applicant, channel="assisted" if assisted else "self",
+                sourced_by=principal.uid if assisted else None,
+                consent_given_at=datetime.now(timezone.utc), consent_notice_version="consent.v2.2026-09")
     store = get_store()
     store.add(case)
     store.audit(principal.uid, principal.role.value, "CREATE_CASE", case.case_id,
-                {"amount": payload.requested_amount, "tenure": payload.tenure_months})
-    return {"case_id": case.case_id}
+                {"amount": payload.requested_amount, "tenure": payload.tenure_months, "channel": case.channel})
+    return {"case_id": case.case_id, "warnings": applicant.warnings()}
 
 
 @app.post("/api/cases/{case_id}/documents")
-async def upload_document(case_id: str, file: UploadFile = File(...),
+async def upload_document(case_id: str, file: UploadFile = File(...), password: str | None = Form(default=None),
                           principal: Principal = Depends(limiter(30))) -> dict[str, Any]:
+    """Accept a statement, decrypt it if needed, and read it immediately so the uploader sees at once
+    which bank, account and period it covers, or why it cannot be used. The password is never stored."""
     settings = get_settings()
     store = get_store()
     case = store.get(case_id)
     authorise_case(case, principal)
     _check_can_attach(case, settings.max_documents_per_case)
     data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
-    await asyncio.to_thread(validate_upload, file.filename or "statement.pdf", data, settings)
+    prepared = await asyncio.to_thread(validate_upload, file.filename or "statement.pdf", data, settings,
+                                       (password or "").strip() or None)
+    from app.documents.intake import preview as preview_statement, unreadable_message
+
+    reading = await asyncio.to_thread(preview_statement, prepared.data)
+    gateway = get_gateway()
+    problem = None if reading["readable"] else unreadable_message(
+        reading["reason"], model_available=gateway.enabled, vision_available=gateway.supports_vision)  # type: ignore[arg-type]
+    if problem:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, problem)
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
-    await asyncio.to_thread(store.put_file, case_id, doc_id, data)
+    await asyncio.to_thread(store.put_file, case_id, doc_id, prepared.data)
+    filename = Path(file.filename or "statement.pdf").name[:80]
     with store.mutate(case_id) as live:
         _check_can_attach(live, settings.max_documents_per_case)  # re-checked under the row lock
-        live.documents.append(Document(doc_id=doc_id, filename=Path(file.filename or "statement.pdf").name[:80],
-                                       sha256="", size_bytes=len(data), page_count=0))
-    store.audit(principal.uid, principal.role.value, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}", {"bytes": len(data)})
-    return {"doc_id": doc_id, "filename": file.filename}
+        live.documents.append(Document(
+            doc_id=doc_id, filename=filename, sha256="", size_bytes=len(data), page_count=prepared.page_count,
+            decrypted=prepared.decrypted, source_sha256=prepared.source_sha256,
+            metadata=prepared.source_metadata if prepared.decrypted else {},
+            incremental_updates=prepared.source_incremental_updates if prepared.decrypted else 0))
+    store.audit(principal.uid, principal.role.value, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}",
+                {"bytes": len(data), "decrypted": prepared.decrypted, "readable": reading["readable"]})
+    note = None if reading["readable"] else "This layout will be read by the AI model when you submit."
+    return {"doc_id": doc_id, "filename": filename, "preview": reading, "note": note}
+
+
+@app.delete("/api/cases/{case_id}/documents/{doc_id}")
+async def remove_document(case_id: str, doc_id: str, principal: Principal = Depends(limiter(30))) -> dict[str, str]:
+    """Take back a statement before submitting (wrong file, wrong account)."""
+    store = get_store()
+    authorise_case(store.get(case_id), principal)
+    with store.mutate(case_id) as live:
+        if live.status != CaseStatus.DRAFT:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Documents cannot be changed after submission.")
+        if not any(d.doc_id == doc_id for d in live.documents):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
+        live.documents = [d for d in live.documents if d.doc_id != doc_id]
+    store.audit(principal.uid, principal.role.value, "REMOVE_DOCUMENT", f"{case_id}/{doc_id}", {})
+    return {"status": "removed"}
 
 
 @app.post("/api/cases/{case_id}/sample")
@@ -305,9 +424,12 @@ def _check_can_attach(case: Case, limit: int) -> None:
 
 
 @app.get("/api/my/cases")
-async def my_cases(principal: Principal = Depends(require_roles(Role.BORROWER))) -> dict[str, Any]:
-    """A borrower's own applications, newest first, so a submitted case is never lost behind a new form."""
-    return {"cases": await asyncio.to_thread(get_store().list_for_owner, principal.uid)}
+async def my_cases(principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
+    """A customer's own applications, or the applications a loan officer sourced, newest first.
+    Officers also see the instant recommendation; customers never see internal scores."""
+    rows = await asyncio.to_thread(get_store().list_for_owner, principal.uid, 200,
+                                   principal.role == Role.LOAN_OFFICER)
+    return {"cases": rows}
 
 
 @app.get("/api/cases/{case_id}")
@@ -393,9 +515,10 @@ async def queue(principal: Principal = Depends(require_roles(Role.UNDERWRITER, R
 
 @app.get("/api/cases/{case_id}/documents/{doc_id}/pages/{page}")
 async def page_image(case_id: str, doc_id: str, page: int,
-                     principal: Principal = Depends(require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
+                     principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
     store = get_store()
     case = store.get(case_id)
+    authorise_case(case, principal)
     if page < 1 or page > 200 or not any(d.doc_id == doc_id for d in case.documents):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.")
     data = await asyncio.to_thread(store.get_file, case_id, doc_id)
@@ -408,9 +531,10 @@ async def page_image(case_id: str, doc_id: str, page: int,
 
 @app.get("/api/cases/{case_id}/evidence/{evidence_id}/crop")
 async def evidence_crop(case_id: str, evidence_id: str,
-                        principal: Principal = Depends(require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
+                        principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
     store = get_store()
     case = store.get(case_id)
+    authorise_case(case, principal)
     evidence = case.evidence.get(evidence_id)
     if not evidence or not evidence.bbox:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found.")
@@ -582,7 +706,19 @@ async def readyz() -> Response:
     if not await asyncio.to_thread(get_store().ping):
         return JSONResponse({"status": "database_unavailable"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     return JSONResponse({"status": "ready", "receipt_key_id": signer().key_id,
-                         "ephemeral_receipt_key": signer().ephemeral})
+                         "ephemeral_receipt_key": signer().ephemeral, "ai": await _ai_status()})
+
+
+async def _ai_status() -> dict[str, Any]:
+    """Whether the configured model is reachable. Informational: the service runs without it."""
+    settings = get_settings()
+    if settings.llm_mode == "ollama":
+        from app.ai.gateway import OllamaClient
+
+        ok, detail = await OllamaClient(settings.ollama_url).ping(settings.ollama_model)
+        return {"mode": "ollama", "model": settings.ollama_model, "vision_model": settings.ollama_vision_model,
+                "reachable": ok, "detail": detail}
+    return {"mode": settings.llm_mode, "reachable": settings.llm_mode != "offline"}
 
 
 @app.get("/.well-known/artha-receipt-key.json")

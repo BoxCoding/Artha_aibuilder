@@ -227,13 +227,13 @@ def groundedness_gate(memo: CreditMemo) -> CreditMemo:
 
 # --------------------------------------------------------------------------- Gemini writer & critic
 
-def _from_draft(draft: MemoDraft, version: int) -> CreditMemo:
+def _from_draft(draft: MemoDraft, version: int, author: str = "gemini") -> CreditMemo:
     sections = []
     for section in draft.sections:
         claims = [Claim(claim_id=f"c-{section.key}-{i}", text=c.text[:700], evidence_ids=c.evidence_ids,
                         policy_clause_ids=c.policy_clause_ids) for i, c in enumerate(section.claims[:4])]
         sections.append(MemoSection(key=section.key, title=SECTION_TITLES.get(section.key, section.title), claims=claims))
-    return CreditMemo(version=version, author="gemini", sections=sections,
+    return CreditMemo(version=version, author=author, sections=sections,  # type: ignore[arg-type]
                       recommended_outcome=Outcome(draft.recommended_outcome), open_questions=draft.open_questions[:5])
 
 
@@ -258,7 +258,7 @@ async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, m
             memo = compose_offline(case)
             memo.open_questions.append("Gemini memo writer was unavailable; memo composed deterministically.")
             break
-        memo = _from_draft(draft, iteration)
+        memo = _from_draft(draft, iteration, gateway.provider)
         memo.iterations = iteration
         issues = deterministic_critic(case, memo, payload)
         try:
@@ -281,7 +281,18 @@ async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, m
     assert memo is not None
     if memo.author == "offline_composer":
         memo.critic_issues = deterministic_critic(case, memo, bundle)
-    return groundedness_gate(memo)
+    gated = groundedness_gate(memo)
+    published = sum(len(s.claims) for s in gated.sections)
+    if memo.author != "offline_composer" and published < max(3, len(gated.dropped_claims)):
+        # The model's draft did not survive review (common with small local models). An underwriter
+        # gets the deterministic memo rather than a thin one, and is told why.
+        fallback = compose_offline(case)
+        fallback.critic_issues = deterministic_critic(case, fallback, bundle)
+        fallback.open_questions.append(f"The {memo.author} draft lost {len(gated.dropped_claims)} of "
+                                       f"{published + len(gated.dropped_claims)} claims at the groundedness gate; "
+                                       "this memo was composed deterministically instead.")
+        return groundedness_gate(fallback)
+    return gated
 
 
 def policy_clause_catalogue(jurisdiction: str) -> dict[str, str]:

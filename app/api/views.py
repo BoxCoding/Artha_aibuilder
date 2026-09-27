@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.domain.formatting import emi, inr, pct
+from app.domain.kyc import ApplicantProfile
 from app.domain.models import Case, Explanation, Role
 from app.risk.engine import band_rate, clause_text
 
@@ -32,7 +33,8 @@ class RegisterRequest(BaseModel):
 
 
 class CreateCaseRequest(BaseModel):
-    business_name: str = Field(min_length=2, max_length=80)
+    applicant: ApplicantProfile
+    business_name: str | None = Field(default=None, min_length=2, max_length=120)
     requested_amount: int = Field(ge=50_000, le=1_000_000)
     tenure_months: int = Field(ge=12, le=36)
     language: str = Field(default="en", max_length=5)
@@ -48,6 +50,18 @@ class DecisionRequest(BaseModel):
     outcome: str
     approved_amount: int | None = None
     reason: str | None = Field(default=None, max_length=600)
+
+
+class CreateUserRequest(BaseModel):
+    email: str = Field(max_length=254)
+    name: str = Field(min_length=2, max_length=120)
+    role: Role
+    password: str = Field(min_length=1, max_length=256)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
 
 
 class CopilotRequest(BaseModel):
@@ -77,6 +91,8 @@ def borrower_view(case: Case, explanation: Explanation | None) -> dict[str, Any]
         "language": case.language, "requested_amount": inr(case.requested_amount),
         "tenure_months": case.tenure_months, "progress": _progress(case),
         "failure_reason": case.failure_reason, "decided": decision is not None,
+        "applicant": case.applicant.model_dump(mode="json") if case.applicant else None,
+        "documents": [{"doc_id": d.doc_id, "filename": d.filename} for d in case.documents],
     }
     if decision and explanation:
         amount = decision.approved_amount
@@ -99,11 +115,15 @@ def staff_view(case: Case) -> dict[str, Any]:
         "requested_amount": inr(case.requested_amount), "tenure_months": case.tenure_months,
         "created_at": case.created_at, "ai_mode": case.ai_mode, "token_usage": case.token_usage,
         "progress": _progress(case), "failure_reason": case.failure_reason,
+        "channel": case.channel, "sourced_by": case.sourced_by,
+        "applicant": case.applicant.model_dump(mode="json") if case.applicant else None,
+        "applicant_warnings": case.applicant.warnings() if case.applicant else [],
         "documents": [{"doc_id": d.doc_id, "filename": d.filename, "pages": d.page_count, "parser": d.parser,
                        "sha256": d.sha256[:16], "bank": d.header.bank_name, "holder": d.header.account_holder,
                        "account_last4": d.header.account_last4, "period_from": d.header.period_from,
                        "period_to": d.header.period_to, "metadata": d.metadata,
-                       "incremental_updates": d.incremental_updates} for d in case.documents],
+                       "incremental_updates": d.incremental_updates, "decrypted": d.decrypted}
+                      for d in case.documents],
         "signals": [s.model_dump() for s in sorted(
             case.signals, key=lambda s: (-"INFO LOW MEDIUM HIGH CRITICAL".split().index(s.severity), s.code))],
         "features": case.features, "monthly": case.monthly,

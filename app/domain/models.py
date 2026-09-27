@@ -8,15 +8,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.kyc import ApplicantProfile
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class Role(StrEnum):
-    BORROWER = "borrower"
-    UNDERWRITER = "underwriter"
-    RISK_ADMIN = "risk_admin"
+    BORROWER = "borrower"        # the customer, applying for themselves
+    LOAN_OFFICER = "loan_officer"  # branch / field staff onboarding customers; cannot sanction
+    UNDERWRITER = "underwriter"  # credit officer; records decisions
+    RISK_ADMIN = "risk_admin"    # risk, assurance and user administration
 
 
 class CaseStatus(StrEnum):
@@ -98,10 +101,13 @@ class Document(Strict):
     size_bytes: int
     page_count: int
     doc_type: str = "bank_statement"
-    parser: Literal["template", "gemini", "none"] = "none"
+    parser: Literal["template", "universal", "gemini", "ollama", "none"] = "none"
     header: StatementHeader = Field(default_factory=StatementHeader)
     metadata: dict[str, str] = Field(default_factory=dict)
     incremental_updates: int = 0
+    # Password-protected uploads are decrypted at intake; these keep the original file's identity.
+    decrypted: bool = False
+    source_sha256: str | None = None
 
 
 class Signal(Strict):
@@ -179,7 +185,7 @@ class CriticIssue(Strict):
 
 class CreditMemo(Strict):
     version: int
-    author: Literal["gemini", "offline_composer"]
+    author: Literal["gemini", "ollama", "offline_composer"]
     sections: list[MemoSection]
     recommended_outcome: Outcome
     open_questions: list[str] = Field(default_factory=list)
@@ -219,7 +225,7 @@ class Explanation(Strict):
     key_terms: list[str]
     contact: str
     integrity_review: bool
-    author: Literal["gemini", "templates"]
+    author: Literal["gemini", "ollama", "templates"]
 
 
 class Case(Strict):
@@ -230,6 +236,9 @@ class Case(Strict):
     tenure_months: int
     language: str = "en"
     jurisdiction: str = "IN"
+    applicant: ApplicantProfile | None = None
+    channel: Literal["self", "assisted"] = "self"
+    sourced_by: str | None = None
     status: CaseStatus = CaseStatus.DRAFT
     consent_given_at: datetime | None = None
     consent_notice_version: str | None = None

@@ -15,7 +15,12 @@ from app.domain.models import Case, Document, Evidence, Signal, Transaction
 from app.security.injection import detect
 
 TOLERANCE = Decimal("0.01")
-EXPECTED_PRODUCERS = ("corebanking statement engine",)
+# Statement systems we know each bank uses. A producer that differs is only meaningful when we know
+# what to expect: real banks use many generators (iText, BI Publisher, JasperReports, browser print),
+# so an unknown bank's producer is never, by itself, a finding. Extend as real statements are profiled.
+EXPECTED_PRODUCERS_BY_BANK: dict[str, tuple[str, ...]] = {
+    "kaveri commercial bank": ("corebanking statement engine",),  # the synthetic generator's bank
+}
 EDITOR_HINTS = ("editor", "ilovepdf", "smallpdf", "sejda", "pdfescape", "foxit phantom", "acrobat",
                 "nitro", "canva", "microsoft word", "libreoffice", "quickpdf", "pdf24", "photoshop")
 
@@ -131,7 +136,8 @@ def rule_editing_traces(case: Case) -> list[Signal]:
     for n, doc in enumerate(case.documents):
         producer = (doc.metadata.get("Producer", "") + " " + doc.metadata.get("Creator", "")).lower()
         editor = next((hint for hint in EDITOR_HINTS if hint in producer), None)
-        unexpected = bool(producer.strip()) and not any(p in producer for p in EXPECTED_PRODUCERS)
+        expected = EXPECTED_PRODUCERS_BY_BANK.get((doc.header.bank_name or "").strip().lower())
+        unexpected = bool(expected) and bool(producer.strip()) and not any(p in producer for p in expected)
         created, modified = doc.metadata.get("CreationDate", ""), doc.metadata.get("ModDate", "")
         later_edit = bool(created and modified and modified[2:10] > created[2:10])
         reasons = []
@@ -300,6 +306,37 @@ RULES: tuple[Rule, ...] = (
     rule_duplicate_references, rule_date_sequence, rule_circular_transfers, rule_window_dressing,
     rule_statistical_outliers,
 )
+
+
+def rule_identity_consistency(case: Case) -> list[Signal]:
+    """The statement should belong to the applicant or their business. A mismatch is a reason to
+    verify, not an accusation: family accounts and trade names are common and innocent."""
+    from app.domain.kyc import names_match
+
+    applicant = case.applicant
+    if applicant is None:
+        return []
+    signals: list[Signal] = []
+    for n, doc in enumerate(case.documents):
+        holder = (doc.header.account_holder or "").strip()
+        if not holder or names_match(holder, applicant.full_name, applicant.business_name):
+            continue
+        ev_id = f"ev-{doc.doc_id}-header"
+        if ev_id not in case.evidence:
+            ev_id = f"ev-{doc.doc_id}-holder"
+            case.evidence[ev_id] = Evidence(evidence_id=ev_id, doc_id=doc.doc_id, page=1, kind="HEADER",
+                                            description=f"Account holder printed on the statement: {holder[:60]}")
+        signals.append(Signal(
+            signal_id=_sid(case, "ID-NAME-001", n), code="ID-NAME-001", category="FRAUD", severity="MEDIUM",
+            confidence=0.6, detector="RULE", corroborated=True, evidence_ids=[ev_id],
+            title="Statement is in a different name",
+            explanation=(f"The account holder on the statement ({holder[:60]}) does not match the applicant or the "
+                         "business named in the application. Confirm the account belongs to the applicant."),
+        ))
+    return signals
+
+
+RULES = RULES + (rule_identity_consistency,)
 
 
 def run_rules(case: Case) -> list[Signal]:

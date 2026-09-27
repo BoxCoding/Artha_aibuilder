@@ -41,7 +41,13 @@ class Settings(BaseSettings):
 
     # AI mode: "vertex" = Gemini on Gemini Enterprise Agent Platform (ADC on Cloud Run),
     # "api_key" = Gemini API for local development, "offline" = deterministic simulation.
-    llm_mode: Literal["vertex", "api_key", "offline"] = "offline"
+    llm_mode: Literal["vertex", "api_key", "ollama", "offline"] = "offline"
+    # Local models via Ollama. The vision model is optional: without one, scanned or photographed
+    # statements are refused with a clear message instead of being guessed at.
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "gemma3:4b"
+    ollama_vision_model: str | None = None
+    ollama_num_ctx: int = 8192
     google_cloud_project: str | None = None
     google_cloud_location: str = "global"
     gemini_api_key: SecretStr | None = None

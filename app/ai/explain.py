@@ -97,7 +97,7 @@ async def build_explanation(case: Case, lang: str, gateway: LLMGateway, meter: U
         return fallback  # never show text that adds figures or leaks internal terms
     return Explanation(language=lang, outcome_sentence=draft.outcome_sentence, reasons=draft.reasons[:3],
                        next_steps=draft.next_steps[:3], key_terms=draft.key_terms[:2], contact=material["contact"],
-                       integrity_review=material["integrity_review"], author="gemini")
+                       integrity_review=material["integrity_review"], author=gateway.provider)
 
 
 # --------------------------------------------------------------------------- coach

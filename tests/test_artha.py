@@ -11,6 +11,8 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import APPLICANT
+
 from app.api.main import app
 from app.cashflow.categorise import apply_rules
 from app.cashflow.features import add_computed_evidence, compute_features
@@ -314,7 +316,7 @@ def sign_in(client: TestClient, email: str) -> None:
 
 
 def make_case(client: TestClient, persona: str = "meena", amount: int = 300000) -> str:
-    response = client.post("/api/cases", json={"business_name": "Fixture Co", "requested_amount": amount,
+    response = client.post("/api/cases", json={"applicant": APPLICANT, "business_name": "Fixture Co", "requested_amount": amount,
                                                "tenure_months": 24, "language": "en", "consent": True})
     case_id = response.json()["case_id"]
     client.post(f"/api/cases/{case_id}/sample", json={"persona": persona})
@@ -331,13 +333,13 @@ def make_case(client: TestClient, persona: str = "meena", amount: int = 300000) 
 def test_anonymous_requests_are_rejected(client: TestClient) -> None:
     assert client.get("/api/me").status_code == 401
     assert client.get("/api/queue").status_code == 401
-    assert client.post("/api/cases", json={"business_name": "X", "requested_amount": 100000, "tenure_months": 24,
+    assert client.post("/api/cases", json={"applicant": APPLICANT, "business_name": "X", "requested_amount": 100000, "tenure_months": 24,
                                            "consent": True}).status_code == 401
 
 
 def test_consent_is_required(client: TestClient) -> None:
     sign_in(client, "meena@demo.artha")
-    response = client.post("/api/cases", json={"business_name": "X Co", "requested_amount": 100000,
+    response = client.post("/api/cases", json={"applicant": APPLICANT, "business_name": "X Co", "requested_amount": 100000,
                                                "tenure_months": 24, "language": "en", "consent": False})
     assert response.status_code == 400
 
@@ -366,7 +368,7 @@ def test_a_borrower_cannot_read_another_borrowers_case(client: TestClient) -> No
     assert client.get(f"/api/cases/{case_id}").status_code == 200
     other = TestClient(app)
     sign_in(other, "meena@demo.artha")
-    hijacked = other.post("/api/cases", json={"business_name": "Other", "requested_amount": 100000,
+    hijacked = other.post("/api/cases", json={"applicant": APPLICANT, "business_name": "Other", "requested_amount": 100000,
                                               "tenure_months": 24, "language": "en", "consent": True}).json()["case_id"]
     sign_in(client, "meena@demo.artha")
     assert client.get(f"/api/cases/{hijacked}").status_code in (200, 404)  # same demo uid, so 200 is correct
@@ -374,7 +376,7 @@ def test_a_borrower_cannot_read_another_borrowers_case(client: TestClient) -> No
 
 def test_uploads_must_be_real_unencrypted_pdfs(client: TestClient) -> None:
     sign_in(client, "meena@demo.artha")
-    case_id = client.post("/api/cases", json={"business_name": "X Co", "requested_amount": 100000,
+    case_id = client.post("/api/cases", json={"applicant": APPLICANT, "business_name": "X Co", "requested_amount": 100000,
                                               "tenure_months": 24, "language": "en", "consent": True}).json()["case_id"]
     bad = client.post(f"/api/cases/{case_id}/documents",
                       files={"file": ("statement.pdf", b"GIF89a not a pdf", "application/pdf")})

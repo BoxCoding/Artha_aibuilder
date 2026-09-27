@@ -276,6 +276,14 @@ class AccountService:
         self.repo.save(user)
         return user
 
+    def needs_setup(self) -> bool:
+        """True until the first real administrator exists (demo accounts do not count)."""
+        return not any(u.role == Role.RISK_ADMIN and u.active and not u.is_demo for u in self.repo.list())
+
+    def verify_password(self, uid: str, password: str) -> bool:
+        user = self.repo.get(uid)
+        return bool(user and user.password_hash and _verify(user.password_hash, password))
+
     def revoke_sessions(self, uid: str) -> None:
         user = self.repo.get(uid)
         if user:

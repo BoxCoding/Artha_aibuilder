@@ -77,8 +77,9 @@ def require_roles(*roles: Role):  # type: ignore[no-untyped-def]
 
 
 def authorise_case(case: Case, principal: Principal) -> None:
-    """Borrowers see only their own cases; staff see all. 404 rather than 403 to avoid leaking existence."""
-    if principal.role == Role.BORROWER and case.owner_uid != principal.uid:
+    """Customers see their own applications and loan officers the ones they sourced; credit and risk staff
+    see all. 404 rather than 403 to avoid leaking existence."""
+    if principal.role in (Role.BORROWER, Role.LOAN_OFFICER) and case.owner_uid != principal.uid:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found.")
 
 
@@ -199,9 +200,11 @@ def limiter(limit: int, window_seconds: int = 60, scope: str = "default"):  # ty
     return dependency
 
 
-def validate_upload(filename: str, data: bytes, settings: Settings) -> int:
+def validate_upload(filename: str, data: bytes, settings: Settings, password: str | None = None):  # type: ignore[no-untyped-def]
     """Content-based validation. The declared content type and the file name are never trusted.
-    Returns the page count."""
+    Decrypts a password-protected statement and returns the prepared file."""
+    from app.documents.intake import IntakeError, prepare
+
     if not data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "The file is empty.")
     if len(data) > settings.max_upload_mb * 1024 * 1024:
@@ -213,18 +216,16 @@ def validate_upload(filename: str, data: bytes, settings: Settings) -> int:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "This PDF contains active content and cannot be accepted. Download a fresh copy from your "
                             "bank and upload that.")
-    from pypdf import PdfReader
-    from pypdf.errors import PdfReadError
-
     try:
-        reader = PdfReader(io.BytesIO(data))
-        if reader.is_encrypted:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
-                                "This PDF is password protected. Remove the password and upload it again.")
-        pages = len(reader.pages)
-    except (PdfReadError, ValueError, OSError) as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "This PDF could not be opened.") from exc
-    if pages > settings.max_pages_per_document:
+        prepared = prepare(data, password)
+    except IntakeError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    if prepared.decrypted and (b"/JavaScript" in prepared.data or b"/Launch" in prepared.data
+                               or b"/EmbeddedFile" in prepared.data):
+        # Encryption hides active content from the first check; look again once it is decrypted.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            "This PDF contains active content and cannot be accepted.")
+    if prepared.page_count > settings.max_pages_per_document:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             f"Statements longer than {settings.max_pages_per_document} pages are not accepted here.")
-    return pages
+    return prepared

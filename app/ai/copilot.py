@@ -217,8 +217,11 @@ async def ask(case: Case, question: str, gateway: LLMGateway) -> CopilotAnswer:
         return CopilotAnswer("That message looks like an instruction aimed at the model rather than a question "
                              "about this case, so I have not acted on it.")
     box = CaseToolbox(case)
-    if not gateway.enabled:
-        return _route_offline(case, question, box)
+    if not gateway.supports_tools:
+        answer = _route_offline(case, question, box)
+        if gateway.enabled:
+            answer.author = "tool_router"
+        return answer
     try:
         return await _run_llm_agent(case, question, box, gateway)
     except Exception as exc:  # noqa: BLE001 - fall back rather than fail the underwriter's question
