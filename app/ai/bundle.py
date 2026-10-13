@@ -22,7 +22,7 @@ def allowed_numbers(case: Case) -> dict[str, str]:
     nums = {
         "requested_amount": f"₹{inr(case.requested_amount)}",
         "tenure_months": f"{case.tenure_months} months",
-        "statement_span_months": f"{int(f['statement_span_months'])} months",
+        "statement_span_months": f"{f['statement_span_months']:.1f} months",
         "median_monthly_inflow": f"₹{inr(f['median_monthly_inflow'])}",
         "avg_daily_balance": f"₹{inr(f['avg_daily_balance'])}",
         "abb_to_inflow": pct(f["abb_to_inflow"]),

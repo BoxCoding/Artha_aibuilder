@@ -21,11 +21,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.ai.explain import build_explanation, coach_reply
+from app.ai import liveavatar
+from app.ai.guide import guide_reply
 from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
                               enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
 from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
-                           CreateUserRequest, DecisionRequest, LoginRequest, RegisterRequest, case_view)
+                           CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
+                           case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
@@ -34,6 +37,7 @@ from app.domain.models import (OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Do
 from app.domain.store import CaseNotFound, get_store
 from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, get_accounts
 from app.events import publish_event
+from app.journey.state import journey
 from app.pipeline.workflow import mark_needs_manual, submit_case
 from app.synthetic.generator import PERSONAS, persona_statement, render_pdf
 
@@ -42,6 +46,8 @@ STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 DECIDABLE = {CaseStatus.READY_FOR_REVIEW, CaseStatus.PENDING_SECOND_APPROVAL, CaseStatus.NEEDS_MANUAL_PROCESSING}
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
        "connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+# With the LiveAvatar face switched on, the page also talks to its LiveKit media servers.
+CSP_LIVEAVATAR = CSP.replace("connect-src 'self'", "connect-src 'self' wss://*.livekit.cloud https://*.livekit.cloud")
 
 _signer: ReceiptSigner | None = None
 _ready = {"value": False}
@@ -134,11 +140,12 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
                                    "duration_ms": int((datetime.now(timezone.utc) - started).total_seconds() * 1000)})
     request_id_var.reset(token)
     response.headers.update({
-        "Content-Security-Policy": CSP,
+        "Content-Security-Policy": CSP_LIVEAVATAR if liveavatar.enabled(settings) else CSP,
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
         "X-Frame-Options": "DENY",
-        "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+        # Camera and microphone for the video guide, on this origin only.
+        "Permissions-Policy": "geolocation=(), microphone=(self), camera=(self)",
     })
     if "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else "private, max-age=300"
@@ -172,6 +179,7 @@ async def public_config() -> dict[str, Any]:
         "registration": settings.allow_self_registration,
         "password_min_length": settings.password_min_length,
         "languages": settings.supported_languages,
+        "live_avatar": liveavatar.enabled(settings),
         "demo_users": [{"email": e, "name": n, "role": r.value} for e, (n, r) in DEMO_ACCOUNTS.items()] if demo else [],
     }
 
@@ -536,6 +544,69 @@ async def coach(case_id: str, payload: CoachRequest,
                                       UsageMeter(budget=get_settings().token_budget_per_case))
     store.audit(principal.uid, principal.role.value, "COACH_MESSAGE", case_id, {"author": author})
     return {"reply": draft.reply, "offer_callback": draft.offer_callback, "author": author}
+
+
+@app.get("/api/cases/{case_id}/journey")
+async def journey_state(case_id: str,
+                        principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
+    """Where the customer is and what they need to do next. Borrower-safe: no scores or findings."""
+    case = get_store().get(case_id)
+    authorise_case(case, principal)
+    return journey(case, get_settings().max_documents_per_case)
+
+
+@app.post("/api/guide")
+async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30, 60))) -> dict[str, Any]:
+    """The video guide's reply. Works before a case exists (the details step) and at every step after."""
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    settings = get_settings()
+    case = None
+    if payload.case_id:
+        case = get_store().get(payload.case_id)
+        authorise_case(case, principal)
+    language = payload.language if payload.language in settings.supported_languages else (
+        case.language if case else "en")
+    state = journey(case, settings.max_documents_per_case)
+    result = await guide_reply(state, payload.message, language, case, get_gateway(),
+                               UsageMeter(budget=settings.token_budget_per_case))
+    if payload.message.strip():
+        get_store().audit(principal.uid, principal.role.value, "GUIDE_MESSAGE", case.case_id if case else "no-case",
+                          {"author": result["author"], "step": result["step"]})
+    return result
+
+
+class AvatarStart(BaseModel):
+    language: str = Field(default="en", max_length=5)
+
+
+class AvatarStop(BaseModel):
+    session_id: str = Field(max_length=64)
+    session_token: str = Field(max_length=4096)
+
+
+@app.post("/api/guide/avatar")
+async def guide_avatar(payload: AvatarStart, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    """Start a photoreal LiveAvatar session for the video guide. Each session spends provider credits,
+    so it is rate-limited per person (looser in free sandbox mode); any failure tells the page to keep
+    the illustrated presenter."""
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    settings = get_settings()
+    enforce(f"liveavatar:{principal.uid}", liveavatar.sessions_per_10_min(settings), 600)
+    try:
+        session = await liveavatar.start_session(settings, payload.language)
+    except liveavatar.AvatarUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The video presenter is not available right now.") from exc
+    get_store().audit(principal.uid, principal.role.value, "AVATAR_SESSION_STARTED", session["session_id"],
+                      {"sandbox": session["sandbox"], "language": payload.language})
+    return session
+
+
+@app.post("/api/guide/avatar/stop")
+async def guide_avatar_stop(payload: AvatarStop, principal: Principal = Depends(limiter(20, 600))) -> dict[str, str]:
+    await liveavatar.stop_session(payload.session_id, payload.session_token)
+    return {"status": "stopped"}
 
 
 @app.post("/api/cases/{case_id}/callback")
@@ -922,7 +993,7 @@ def _asset_version() -> str:
     import hashlib
 
     digest = hashlib.sha256()
-    for name in ("app.js", "styles.css", "index.html"):
+    for name in ("app.js", "guide.js", "styles.css", "index.html"):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:12]
 

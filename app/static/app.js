@@ -1,6 +1,9 @@
 /* LedgerLens front end. No inline scripts or styles: the page is served under a strict CSP.
    Text is built with textContent, never innerHTML, so document content can never become markup. */
 
+// Carry this file's ?v= asset version over, so a deploy never pairs new app.js with a cached guide.js.
+const { createGuide } = await import(`./guide.js${new URL(import.meta.url).search}`);
+
 const $ = (id) => document.getElementById(id);
 const state = { me: null, config: null, authMode: "signin", caseId: null, caseData: null, tab: "memo", docId: null, pages: new Map(), lang: "en" };
 
@@ -55,13 +58,17 @@ function describeValidation(errors) {
 
 const VIEWS = ["gate", "apply", "progress", "mine", "outcome", "queue", "case", "risk", "team", "account"];
 let viewToken = 0; // bumped on every view change, so a background poll knows when to stop
+let currentView = null;
+let guide = null; // the video guide, created at boot
 function show(name) {
   viewToken += 1;
+  currentView = name;
   document.querySelectorAll("#nav button[data-view]").forEach((b) => {
     if (b.dataset.view === name) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
   });
   VIEWS.forEach((v) => $(`view-${v}`).classList.toggle("hidden", v !== name));
   window.scrollTo({ top: 0 });
+  guide?.onView(name);
 }
 
 function el(tag, className, text) {
@@ -232,6 +239,7 @@ async function signIn(credentials) {
 
 function afterSignIn() {
   renderNav();
+  guide?.setUser(state.me, state.lang);
   if (state.me.role === "borrower" || state.me.role === "loan_officer") loadMine();
   else if (state.me.role === "underwriter") loadQueue();
   else loadRisk();
@@ -262,7 +270,7 @@ function renderNav() {
   const out = el("button", "ghost", "Sign out");
   out.addEventListener("click", async () => {
     try { await api("/api/session", { method: "DELETE" }); } catch { /* signing out locally regardless */ }
-    state.me = null; renderGate(); renderNav();
+    state.me = null; guide?.setUser(null); renderGate(); renderNav();
   });
   nav.appendChild(out);
 }
@@ -472,6 +480,7 @@ function renderApply() {
         form.appendChild(warn);
       }
       renderStatements(form);
+      guide?.onView(currentView);
     } catch (error) {
       note.textContent = error.message;
       next.disabled = false;
@@ -553,10 +562,11 @@ function addUploadRow(list, meta, file, done, sync) {
     row.className = "upload ok";
     status.textContent = result.preview ? describePreview(result.preview) : "Sample statement attached";
     if (result.note) status.textContent += ` (${result.note})`;
+    guide?.onView(currentView);
     clear(actions);
     const remove = el("button", "ghost small-btn", "Remove");
     remove.addEventListener("click", async () => {
-      try { await api(`/api/cases/${state.caseId}/documents/${result.doc_id}`, { method: "DELETE" }); row.remove(); sync(); }
+      try { await api(`/api/cases/${state.caseId}/documents/${result.doc_id}`, { method: "DELETE" }); row.remove(); sync(); guide?.onView(currentView); }
       catch (error) { status.textContent = error.message; }
     });
     actions.appendChild(remove);
@@ -573,6 +583,7 @@ function addUploadRow(list, meta, file, done, sync) {
     } catch (error) {
       row.className = "upload failed";
       status.textContent = error.message;
+      guide?.onUploadError(error.message);
       clear(actions);
       if (/password/i.test(error.message)) {
         const pw = control("input", `pw-${Math.random().toString(36).slice(2)}`, { type: "password",
@@ -764,6 +775,7 @@ async function demoSwitch(email) {
   await api("/api/session", { method: "POST", body: JSON.stringify({ email }) });
   state.me = await api("/api/me");
   renderNav();
+  guide?.setUser(state.me, state.lang);
 }
 
 const BORROWER_STATUS = {
@@ -1619,5 +1631,44 @@ function drawBars(container, entries, wideLabels = false) {
     container.appendChild(row);
   });
 }
+
+/* ------------------------------------------------------------------ video guide */
+
+// The guide's buttons take the customer to the right place; submitting and accepting stay with them.
+const GUIDE_ACTIONS = {
+  fill_form() {
+    if (currentView !== "apply" || state.caseId) renderApply();
+    const first = $("a-full_name");
+    first?.scrollIntoView({ behavior: "smooth", block: "center" });
+    first?.focus();
+  },
+  upload() {
+    const input = $("f-files");
+    input?.closest("fieldset")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    input?.click();
+  },
+  submit() {
+    const button = Array.from(document.querySelectorAll("#view-apply button.stamp"))
+      .find((b) => b.textContent === "Submit for assessment");
+    if (!button) return;
+    button.scrollIntoView({ behavior: "smooth", block: "center" });
+    button.classList.add("guide-pulse");
+    button.focus();
+    setTimeout(() => button.classList.remove("guide-pulse"), 4000);
+  },
+  view_decision() { if (state.caseId) openMine({ case_id: state.caseId }); },
+  async callback() {
+    if (!state.caseId) return;
+    await api(`/api/cases/${state.caseId}/callback`, { method: "POST",
+      body: JSON.stringify({ note: "Requested from the video guide" }) });
+  },
+};
+guide = createGuide({
+  api,
+  // Only the application on screen is the guide's subject; the list and account pages are not.
+  context: () => ({ caseId: ["apply", "progress", "outcome"].includes(currentView) ? state.caseId : null,
+                    screen: currentView === "mine" ? "list" : "application" }),
+  actions: GUIDE_ACTIONS,
+});
 
 boot();
