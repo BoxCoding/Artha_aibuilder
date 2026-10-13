@@ -233,7 +233,7 @@ def test_loan_officer_onboards_a_customer_and_sees_the_instant_recommendation() 
 def test_a_statement_in_someone_elses_name_triggers_verification_not_decline() -> None:
     officer = staff(Role.LOAN_OFFICER)
     case_id = new_case(officer, APPLICANT)  # applicant Meena Devi; the statement belongs to PRIYA NAIR
-    data, _, _ = statement("icici_like", seed=5, count=140)
+    data, _, _ = statement("icici_like", seed=5, count=150)  # 4 Apr - 9 Oct: a full six months
     officer.post(f"/api/cases/{case_id}/documents", files={"file": ("s.pdf", data, "application/pdf")})
     officer.post(f"/api/cases/{case_id}/submit")
     body = wait_until_processed(officer, case_id)

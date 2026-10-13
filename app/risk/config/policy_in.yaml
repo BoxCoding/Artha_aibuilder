@@ -15,6 +15,7 @@ clauses:
   POL-KFS: "Every approval is accompanied by a Key Fact Statement stating the APR and all charges, which the borrower must accept before disbursal."
 knockouts:
   - {id: KO-INTEGRITY, clause: POL-INTEGRITY, signal_category: FRAUD, min_severity: HIGH, outcome: REFER_INTEGRITY_REVIEW, reason_code: RC-DOCUMENT-VERIFICATION}
+  # statement_span_months is actual calendar coverage (1 Mar-31 Aug = 6.0), not the number of months touched.
   - {id: KO-HISTORY, clause: POL-HISTORY, feature: statement_span_months, op: lt, value: 6, outcome: DECLINE, reason_code: RC-SHORT-HISTORY}
   - {id: KO-BOUNCES, clause: POL-BOUNCES, feature: nach_returns_3m, op: gte, value: 3, outcome: DECLINE, reason_code: RC-PAYMENT-RETURNS}
 soft_rules:

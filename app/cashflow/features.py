@@ -1,6 +1,7 @@
 """Cash-flow features. All arithmetic is deterministic; floats are used only for ratios."""
 from __future__ import annotations
 
+import calendar
 import statistics
 from collections import defaultdict
 from datetime import date, timedelta
@@ -9,11 +10,29 @@ from decimal import Decimal
 from app.cashflow.categorise import BUSINESS_CREDIT, DIGITAL_CREDIT
 from app.domain.models import Case, Evidence, Signal, Transaction
 
-FEATURE_SCHEMA_VERSION = "features.v1"
+FEATURE_SCHEMA_VERSION = "features.v2"
 
 
 def _month_key(d: date) -> str:
     return f"{d.year}-{d.month:02d}"
+
+
+def _add_months(d: date, n: int) -> date:
+    y, m = divmod(d.month - 1 + n, 12)
+    year, month = d.year + y, m + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def span_months(start: date, end: date) -> float:
+    """Calendar months covered from start to end inclusive, with the final part-month as a fraction:
+    1 Mar-31 Aug is 6.0, 2 Mar-29 Aug is 5.9, 31 Mar-1 Aug is 4.1. Counting the distinct months a
+    statement touches instead would score the last two as six."""
+    stop = end + timedelta(days=1)
+    whole = (stop.year - start.year) * 12 + stop.month - start.month
+    if _add_months(start, whole) > stop:
+        whole -= 1
+    anchor, following = _add_months(start, whole), _add_months(start, whole + 1)
+    return round(whole + (stop - anchor).days / (following - anchor).days, 2)
 
 
 def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str | float]]]:
@@ -60,7 +79,7 @@ def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str |
     recent_months = months[-3:]
 
     features = {
-        "statement_span_months": float(len(months)),
+        "statement_span_months": span_months(start, end),
         "median_monthly_inflow": round(median_inflow, 2),
         "avg_daily_balance": round(avg_balance, 2),
         "abb_to_inflow": round(avg_balance / median_inflow, 4) if median_inflow else 0.0,

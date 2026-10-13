@@ -13,6 +13,14 @@ from app.config import get_settings
 from app.domain.models import Case
 
 
+def _minimum_history(case: Case) -> float:
+    """The same threshold the policy engine declines on, so the checklist cannot disagree with it."""
+    from app.risk.engine import load_policy
+
+    rule = next(r for r in load_policy(case.jurisdiction)["knockouts"] if r["id"] == "KO-HISTORY")
+    return float(rule["value"])
+
+
 def uncleared_compliance_hits(case: Case) -> list[str]:
     cleared = {c["code"] for c in case.compliance_clearances}
     return sorted({s.code for s in case.signals if s.category == "COMPLIANCE" and s.severity in ("HIGH", "CRITICAL")
@@ -47,7 +55,8 @@ def evaluate(case: Case) -> list[dict[str, Any]]:
     if months is None:
         add("history", "At least six months of statements", "pending", "Analysis not finished")
     else:
-        add("history", "At least six months of statements", "pass" if months >= 6 else "attention", f"{months:.0f} months")
+        add("history", "At least six months of statements", "pass" if months >= _minimum_history(case) else "attention",
+            f"{months:.1f} months")
     if not case.score:
         add("aml", "AML watchlist and cash-reporting screening", "pending", "Runs with the analysis")
     else:

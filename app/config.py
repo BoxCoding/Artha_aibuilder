@@ -63,6 +63,17 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 90.0
     token_budget_per_case: int = 400_000
 
+    # HeyGen LiveAvatar: a photoreal face for the video guide. Off unless a key is set. Sandbox mode
+    # costs no credits but offers one avatar and ~1-minute sessions; turn it off to use your own.
+    liveavatar_api_key: SecretStr | None = None
+    liveavatar_sandbox: bool = True
+    liveavatar_avatar_id: str = "dd73ea75-1218-4ef3-92ce-606d5f7fbc0a"  # "Wayne", the only sandbox avatar
+    liveavatar_max_session_seconds: int = 120
+    # Avatar sessions one person may start per 10 minutes. Sandbox sessions are free and last ~1 minute,
+    # so testing needs headroom; real credits are scarce (the free plan is ~5 minutes a month).
+    liveavatar_sessions_per_10_min_sandbox: int = 30
+    liveavatar_sessions_per_10_min: int = 6
+
     # Model Armor (optional; enabled when a template name is configured)
     model_armor_template: str | None = None  # projects/<p>/locations/<l>/templates/<id>
     model_armor_location: str = "asia-south1"

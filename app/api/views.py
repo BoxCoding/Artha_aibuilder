@@ -72,6 +72,12 @@ class CoachRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
 
 
+class GuideRequest(BaseModel):
+    message: str = Field(default="", max_length=500)
+    language: str = Field(default="en", max_length=5)
+    case_id: str | None = Field(default=None, max_length=40)
+
+
 class CallbackRequest(BaseModel):
     note: str = Field(default="", max_length=300)
 
