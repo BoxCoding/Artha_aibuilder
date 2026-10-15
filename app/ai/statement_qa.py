@@ -12,6 +12,7 @@ answer, but its draft is discarded if it adds any figure or internal term.
 """
 from __future__ import annotations
 
+import asyncio
 import calendar
 import json
 import re
@@ -20,7 +21,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from app.ai.explain import INTERNAL_TERMS, NUMBER
 from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
@@ -52,7 +55,7 @@ MONTHS = {
          "november", "desember"], 1)},
 }
 
-IN_WORDS = ("receive", "received", "came in", "come in", " get ", " got ", "collected", "credited", "credit", "deposit", "inflow", "earn",
+IN_WORDS = ("receive", "received", "came in", "come in", " get ", " got ", "collected", " dapat", " dapet", "credited", "credit", "deposit", "inflow", "earn",
             "income", "sales", "got paid", "मिला", "मिले", "आया", "आए", "जमा", "प्राप्त", "कमाई", "आमदनी", "आय",
             "masuk", "terima", "diterima", "pemasukan", "pendapatan", "setor")
 OUT_WORDS = ("paid", "pay ", "pay?", "payment", "spent", "spend", "debit", "expense", "outflow", "sent", "withdr", "went out",
@@ -73,7 +76,8 @@ CATEGORY_WORDS: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
     (("atm", "withdraw", "निकासी", "निकाला", "tarik tunai"), "out", frozenset({"cash_withdrawal"})),
     (("gst", "tax", "tds", "टैक्स", "आयकर", "pajak"), "out", frozenset({"tax_payment"})),
     (("charge", "fee", "शुल्क", "biaya"), "out", frozenset({"bank_charges", "return_charges"})),
-    (("loan disburs", "loan received", "loan credit", "लोन मिला", "pencairan"), "in", frozenset({"loan_disbursal"})),
+    (("loan disburs", "loan received", "loan credit", "loan money", "लोन मिला", "लोन की रकम", "लोन मिल", "pencairan"),
+     "in", frozenset({"loan_disbursal"})),
     (("card", "pos ", "कार्ड", "kartu"), "in", frozenset({"card_settlement"})),
 )
 # Groups recognised from transaction descriptions rather than categories (the categoriser files most UPI
@@ -90,7 +94,9 @@ DESCRIPTION_GROUPS: tuple[tuple[tuple[str, ...], str, str, str], ...] = (
 PROFILE_WORDS = ("occupation", "profession", "salaried", "self employed", "self-employed", "employment", "my job",
                  "what do i do for a living", "what is my work", "what is my business", "what's my business", "my business type", "type of business",
                  "पेशा", "नौकरी", "वेतनभोगी", "स्वरोज़गार", "स्वरोजगार", "क्या काम", "pekerjaan", "profesi", "karyawan",
-                 "wiraswasta", "usaha saya apa", "bergaji")
+                 "wiraswasta", "usaha saya apa", "bergaji", "my salary", "salary credit", "salary income",
+                 "get a salary", "get salary", "receive a salary", "receive salary", "salaried income",
+                 "मेरा वेतन", "मेरी सैलरी", "मेरी तनख्वाह", "gaji saya")
 SALARY_CREDIT = re.compile(r"\b(salary|sal cr|payroll|wages)\b", re.I)
 
 PRIVATE_WORDS = ("score", "band", "rating", "risk", "fraud", "tamper", "forg", "approval chance", "will i get",
@@ -119,6 +125,7 @@ ACTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
                    "बंटवारा", "किस पर", "कहाँ जाता", "कहां जाता", "कहाँ गया", "कहां गया", "कहाँ से आता", "rincian",
                    "kategori", "ke mana uang", "kemana uang")),
     ("trend", ("going up", "going down", "trend", "increas", "grow", "rising", "falling", "declin", "बढ़", "घट",
+               "badh raha", "badh rahi", "badh rhi", "ghat raha", "ghat rahi", "kam ho raha",
                "naik", "turun", "tren")),
     ("count", ("how many", "number of", "count", "कितनी बार", "कितने लेन", "berapa kali", "berapa banyak", "jumlah transaksi")),
     ("average", ("average", "avg", "mean", "typical", "per month", "औसत", "rata-rata", "rata rata")),
@@ -177,10 +184,10 @@ T = {
         "monthly": "Month by month: {months}.",
         "breakdown_out": "Where your money went{period}: {parts}. Total paid out ₹{amount}.",
         "breakdown_in": "Where your money came from{period}: {parts}. Total received ₹{amount}.",
-        "bal_avg": "Your average daily balance{period} was ₹{amount}.",
-        "bal_low": "Your lowest balance{period} was ₹{amount}, on {day}.",
-        "bal_high": "Your highest balance{period} was ₹{amount}, on {day}.",
-        "bal_close": "Your balance at the end of the statement ({day}) was ₹{amount}.",
+        "bal_avg": "Your average daily balance{period} was {amount}.",
+        "bal_low": "Your lowest balance{period} was {amount}, on {day}.",
+        "bal_high": "Your highest balance{period} was {amount}, on {day}.",
+        "bal_close": "Your balance at the end of the statement ({day}) was {amount}.",
         "health_bounce": "{n} loan instalment(s) were returned unpaid{period}, in {months}.",
         "health_nobounce": "No loan instalments were returned unpaid{period}.",
         "health_charges": "Bounce charges came to ₹{amount}.",
@@ -236,10 +243,10 @@ T = {
         "monthly": "महीने के हिसाब से: {months}।",
         "breakdown_out": "आपका पैसा कहाँ गया{period}: {parts}। कुल भुगतान ₹{amount}।",
         "breakdown_in": "आपका पैसा कहाँ से आया{period}: {parts}। कुल प्राप्त ₹{amount}।",
-        "bal_avg": "आपका औसत दैनिक बैलेंस{period} ₹{amount} था।",
-        "bal_low": "आपका सबसे कम बैलेंस{period} ₹{amount} था, {day} को।",
-        "bal_high": "आपका सबसे ज़्यादा बैलेंस{period} ₹{amount} था, {day} को।",
-        "bal_close": "स्टेटमेंट के अंत ({day}) में आपका बैलेंस ₹{amount} था।",
+        "bal_avg": "आपका औसत दैनिक बैलेंस{period} {amount} था।",
+        "bal_low": "आपका सबसे कम बैलेंस{period} {amount} था, {day} को।",
+        "bal_high": "आपका सबसे ज़्यादा बैलेंस{period} {amount} था, {day} को।",
+        "bal_close": "स्टेटमेंट के अंत ({day}) में आपका बैलेंस {amount} था।",
         "health_bounce": "{period} {n} लोन किश्तें बिना भुगतान लौट गईं, {months} में।",
         "health_nobounce": "{period} कोई लोन किश्त बिना भुगतान नहीं लौटी।",
         "health_charges": "बाउंस शुल्क ₹{amount} रहे।",
@@ -294,10 +301,10 @@ T = {
         "monthly": "Per bulan: {months}.",
         "breakdown_out": "Ke mana uang Anda pergi{period}: {parts}. Total pembayaran ₹{amount}.",
         "breakdown_in": "Dari mana uang Anda datang{period}: {parts}. Total diterima ₹{amount}.",
-        "bal_avg": "Rata-rata saldo harian Anda{period} adalah ₹{amount}.",
-        "bal_low": "Saldo terendah Anda{period} adalah ₹{amount}, pada {day}.",
-        "bal_high": "Saldo tertinggi Anda{period} adalah ₹{amount}, pada {day}.",
-        "bal_close": "Saldo Anda di akhir rekening koran ({day}) adalah ₹{amount}.",
+        "bal_avg": "Rata-rata saldo harian Anda{period} adalah {amount}.",
+        "bal_low": "Saldo terendah Anda{period} adalah {amount}, pada {day}.",
+        "bal_high": "Saldo tertinggi Anda{period} adalah {amount}, pada {day}.",
+        "bal_close": "Saldo Anda di akhir rekening koran ({day}) adalah {amount}.",
         "health_bounce": "{n} cicilan pinjaman dikembalikan tanpa terbayar{period}, pada {months}.",
         "health_nobounce": "Tidak ada cicilan pinjaman yang dikembalikan{period}.",
         "health_charges": "Biaya penolakan sebesar ₹{amount}.",
@@ -347,10 +354,10 @@ OFFICER_EN = {
     "trend_short": "Too few full months in the statement to read a trend.",
     "breakdown_out": "Outflows{period}: {parts}. Total ₹{amount}.",
     "breakdown_in": "Inflows{period}: {parts}. Total ₹{amount}.",
-    "bal_avg": "Average daily balance{period}: ₹{amount}.",
-    "bal_low": "Lowest balance{period}: ₹{amount} on {day}.",
-    "bal_high": "Highest balance{period}: ₹{amount} on {day}.",
-    "bal_close": "Closing balance ({day}): ₹{amount}.",
+    "bal_avg": "Average daily balance{period}: {amount}.",
+    "bal_low": "Lowest balance{period}: {amount} on {day}.",
+    "bal_high": "Highest balance{period}: {amount} on {day}.",
+    "bal_close": "Closing balance ({day}): {amount}.",
     "health_bounce": "{n} instalment(s) returned unpaid{period} ({months}).",
     "health_nobounce": "No instalments returned unpaid{period}.",
     "health_charges": "Bounce charges ₹{amount}.",
@@ -396,6 +403,7 @@ class Query:
     which_month: str | None = None            # "high" | "low"
     balance: str | None = None                # "average" | "lowest" | "highest" | "closing"
     refusal: str | None = None                # "private" | "advice" | "redirect"
+    inferred: bool = False                    # the action was guessed, not asked for: a model may know better
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -447,7 +455,9 @@ class Parser:
     def parse(self, question: str) -> Query:
         q = Query()
         text = " " + re.sub(r"\s+", " ", question.lower()).strip() + " "
-        text = re.sub(r"(?<=\s)(" + "|".join(WORD_NUMBERS) + r")(?=\s)", lambda m: WORD_NUMBERS[m.group(1)], text)
+        # Number words only where they count months ("last two months"); "depend on one customer" keeps its words.
+        text = re.sub(r"(?<=\s)(" + "|".join(WORD_NUMBERS) + r")(?=\s+(?:months?|महीन|bulan))",
+                      lambda m: WORD_NUMBERS[m.group(1)], text)
         if detect(question):
             q.refusal = "redirect"
             return q
@@ -506,7 +516,7 @@ class Parser:
             withdrawing = _has(text, ("withdr", "निकाल", "tarik"))
             q.direction = "out" if withdrawing else "in"
             q.categories = frozenset({"cash_withdrawal"}) if withdrawing else frozenset({"cash_deposit"})
-        if re.search(r"\bupi\b", text):
+        if re.search(r"\b(upi|gpay|google pay|phonepe|phone pe|paytm|bhim)\b", text):
             q.channel = "upi"
         elif re.search(r"\b(neft|imps|rtgs|bank transfer)\b", text):
             q.channel = "transfer"
@@ -528,7 +538,7 @@ class Parser:
         if q.action is None and (q.counterparty or q.min_amount or q.max_amount or q.period == "day"):
             q.action = "list"
         if q.action is None and (q.categories or q.channel or q.direction or q.pattern):
-            q.action = "total"
+            q.action, q.inferred = "total", True
         return q
 
     def _amounts(self, text: str, q: Query) -> None:
@@ -639,6 +649,7 @@ class Answer:
     follow_ups: list[str] = field(default_factory=list)
     understood: bool = True
     author: str = "statement_engine"
+    action: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {"answer": self.text, "figures": self.figures, "evidence_ids": self.evidence_ids, "rows": self.rows,
@@ -647,6 +658,15 @@ class Answer:
 
 def _money(value: Decimal | float) -> str:
     return inr(Decimal(str(value)).quantize(Decimal("1")))
+
+
+OVERDRAWN = {"en": "overdrawn", "hi": "ओवरड्रॉ", "id": "cerukan"}
+
+
+def _balance(value: Decimal | float, lang: str) -> str:
+    """₹1,234, or "−₹1,234 (overdrawn)" when the account went below zero."""
+    value = Decimal(str(value))
+    return f"₹{_money(value)}" if value >= 0 else f"−₹{_money(-value)} ({OVERDRAWN[lang]})"
 
 
 def _amount_of(t: Transaction) -> Decimal:
@@ -794,16 +814,19 @@ class StatementQA:
 
     # ---- entry point
     def answer(self, question: str) -> Answer:
+        return self.answer_query(Parser(self.start, self.end).parse(question))
+
+    def answer_query(self, q: Query) -> Answer:
         t = self.t
-        q = Parser(self.start, self.end).parse(question)
         if not self.txns and q.action != "profile":
             return Answer(text=t["none"].format(what="", period=""), understood=False)
         if q.refusal:
             return Answer(text=t[q.refusal], follow_ups=t["follow_ups"][:3], understood=True, author="statement_engine")
         if not q.understood:
             return Answer(text=f"{t['unclear']} " + " · ".join(t["follow_ups"]), follow_ups=t["follow_ups"], understood=False)
-        handler = getattr(self, f"_a_{q.action}")
-        return handler(q)
+        result = getattr(self, f"_a_{q.action}")(q)
+        result.action = q.action
+        return result
 
     # ---- actions
     def _a_profile(self, q: Query) -> Answer:
@@ -1060,7 +1083,8 @@ class StatementQA:
     def _a_breakdown(self, q: Query) -> Answer:
         direction = q.direction or "out"
         q.direction, q.categories = direction, None
-        rows = [r for r in self._select(q) if r.category != "self_transfer"]
+        # Moving money between own accounts, and a bounced EMI coming back, are neither income nor spending.
+        rows = [r for r in self._select(q) if r.category not in ("self_transfer", "nach_return")]
         period = self._period(q)
         if not rows:
             return self._done(self.t["none"].format(what="", period=period), [], {})
@@ -1082,16 +1106,17 @@ class StatementQA:
             return self._done(self.t["none"].format(what="", period=period), [], {})
         if q.balance == "average":
             avg = sum(daily.values(), Decimal("0")) / len(daily)
-            return self._done(self.t["bal_avg"].format(period=period, amount=_money(avg)), [], {"average_balance": float(avg)})
+            return self._done(self.t["bal_avg"].format(period=period, amount=_balance(avg, self.lang)), [],
+                              {"average_balance": float(avg)})
         if q.balance in ("lowest", "highest"):
             day = (min if q.balance == "lowest" else max)(daily, key=lambda d: daily[d])
             rows = [r for r in self.txns if r.txn_date == day][-1:]
             text = self.t["bal_low" if q.balance == "lowest" else "bal_high"].format(
-                period=period, amount=_money(daily[day]), day=_day(day, self.lang))
+                period=period, amount=_balance(daily[day], self.lang), day=_day(day, self.lang))
             return self._done(text, rows, {"balance": float(daily[day]), "date": day.isoformat()})
         day = max(daily)
         rows = [r for r in self.txns if r.txn_date <= day][-1:]
-        return self._done(self.t["bal_close"].format(day=_day(day, self.lang), amount=_money(daily[day])), rows,
+        return self._done(self.t["bal_close"].format(day=_day(day, self.lang), amount=_balance(daily[day], self.lang)), rows,
                           {"balance": float(daily[day]), "date": day.isoformat()})
 
     def _a_health(self, q: Query) -> Answer:
@@ -1127,10 +1152,125 @@ class StatementQA:
                            "low_balance_days": low_days, "days": len(daily), "low_balance_threshold": float(threshold)})
 
 
+# --------------------------------------------------------------------------- AI question interpreter
+
+ACTIONS_AI = ("total", "count", "list", "largest", "smallest", "average", "which_month", "trend", "share", "breakdown",
+              "balance", "health", "top_parties", "concentration", "period", "profile", "unsupported")
+CATEGORIES_AI = tuple(CATEGORY_LABELS["en"])
+
+
+class QueryDraft(BaseModel):
+    """What the model may say about a question: which computation and which filters. Never an answer."""
+    action: Literal[ACTIONS_AI]  # type: ignore[valid-type]
+    direction: Literal["in", "out"] | None = None
+    category: Literal[CATEGORIES_AI] | None = None  # type: ignore[valid-type]
+    group: Literal["travel", "fuel"] | None = None
+    channel: Literal["upi", "transfer"] | None = None
+    counterparty: str | None = Field(default=None, max_length=40)
+    month: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    last_n_months: int | None = Field(default=None, ge=1, le=24)
+    on_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    min_amount: float | None = Field(default=None, ge=0)
+    max_amount: float | None = Field(default=None, ge=0)
+    balance: Literal["average", "lowest", "highest", "closing"] | None = None
+    which_month: Literal["high", "low"] | None = None
+    income_only: bool = False
+
+
+def query_from_draft(draft: QueryDraft, start: date, end: date) -> Query | None:
+    """Turn the model's draft into the engine's query, rejecting anything outside the statement's facts."""
+    if draft.action == "unsupported":
+        return None
+    q = Query(action=draft.action, direction=draft.direction, channel=draft.channel)
+    if draft.category:
+        q.categories = frozenset({draft.category})
+        q.direction = q.direction or ("in" if draft.category in BUSINESS_CREDIT or draft.category in
+                                      ("loan_disbursal", "nach_return") else "out")
+    if draft.income_only:
+        q.direction, q.categories, q.what_key = "in", q.categories or frozenset(BUSINESS_CREDIT), "income"
+    if draft.group:
+        q.pattern = TRAVEL_PATTERN if draft.group == "travel" else FUEL_PATTERN
+        q.group, q.direction = draft.group, "out"
+    if draft.counterparty:
+        words = [w for w in re.sub(r"[^a-z0-9& ]", " ", draft.counterparty.lower()).split() if w not in STOP_PARTY]
+        q.counterparty = " ".join(words) or None
+    try:
+        if draft.on_date:
+            q.start = q.end = date.fromisoformat(draft.on_date)
+            q.period = "day"
+        elif draft.month:
+            year, month = int(draft.month[:4]), int(draft.month[5:])
+            q.start, q.end = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+            q.period = "month"
+        elif draft.last_n_months:
+            y, m = divmod(end.year * 12 + end.month - 1 - (draft.last_n_months - 1), 12)
+            q.start, q.end, q.period = date(y, m + 1, 1), end, "range"
+    except ValueError:
+        return None
+    if q.start and (q.end < start or q.start > end):
+        return None  # a period the statement does not cover
+    q.min_amount = Decimal(str(draft.min_amount)) if draft.min_amount else None
+    q.max_amount = Decimal(str(draft.max_amount)) if draft.max_amount else None
+    if q.action == "balance":
+        q.balance = draft.balance or "closing"
+    if q.action == "which_month":
+        q.which_month = draft.which_month or "high"
+    if q.action == "share" and q.direction is None:
+        q.direction = "in"
+    if q.action == "top_parties" and q.direction is None:
+        q.direction = "in"
+    return q
+
+
+async def interpret(question: str, start: date, end: date, gateway: LLMGateway, meter: UsageMeter) -> Query | None:
+    """Ask the model to turn a question the keyword parser could not read into a structured query.
+
+    The model chooses a computation and filters from fixed lists; it never sees the transactions, scores
+    or findings, and never writes a figure. Injection attempts and questions about internal assessments
+    are stopped before it is called. Any failure, timeout or invalid output means "not understood"."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not (settings.ai_question_parser and gateway.enabled) or detect(question):
+        return None
+    pre = Parser(start, end).parse(question)
+    if pre.refusal:
+        return None
+    facts = {"question": question[:500], "statement_from": start.isoformat(), "statement_to": end.isoformat()}
+    try:
+        draft = await asyncio.wait_for(
+            # Minimal thinking: measured ~4.5 s and steady on the lite model, against 4-19 s with the default.
+            gateway.structured(prompt_id="query_parser", schema=QueryDraft, meter=meter, model=settings.model_lite,
+                               thinking="MINIMAL", contents=[json.dumps(facts, ensure_ascii=False)], attempts=1),
+            timeout=settings.ai_question_parser_timeout_seconds)
+    except (LLMUnavailable, asyncio.TimeoutError):
+        return None
+    return query_from_draft(draft, start, end)
+
+
+async def answer_with_ai(case: Case, question: str, language: str, gateway: LLMGateway, meter: UsageMeter,
+                         spoken: bool = False, audience: str = "customer") -> Answer:
+    """The keyword parser first (instant); the model's interpretation only for questions it could not read."""
+    engine = StatementQA(case, language, spoken=spoken, audience=audience)
+    parsed = Parser(engine.start, engine.end).parse(question)
+    if (parsed.understood and not parsed.inferred) or not case.transactions:
+        return engine.answer_query(parsed)
+    query = await interpret(question, engine.start, engine.end, gateway, meter)
+    if query is None:
+        return engine.answer_query(parsed)  # the keyword guess, or "not understood"
+    result = engine.answer_query(query)
+    result.author = f"{gateway.provider}+statement_engine"
+    return result
+
+
 async def answer(case: Case, question: str, language: str, gateway: LLMGateway, meter: UsageMeter) -> dict[str, Any]:
-    """Answer from the statement. A configured model may only rephrase the computed answer."""
-    result = StatementQA(case, language).answer(question)
-    if gateway.enabled and result.understood and result.figures and not detect(question):
+    """Answer from the statement. A configured model may interpret an unusual question (the engine still computes
+    every figure) and, if rephrasing is switched on, reword the computed answer."""
+    from app.config import get_settings
+
+    result = await answer_with_ai(case, question, language, gateway, meter)
+    if (get_settings().ai_rephrase and gateway.enabled and result.understood and result.figures
+            and not detect(question)):
         facts = {"language": language, "question": question[:500], "computed_answer": result.text, "figures": result.figures}
         try:
             draft = await gateway.structured(prompt_id="statement_qa", schema=CoachDraft, meter=meter,
@@ -1146,6 +1286,20 @@ async def answer(case: Case, question: str, language: str, gateway: LLMGateway, 
 
 FUTURE_LOAN = re.compile(r"\b(will|would|going to|new loan|my loan|this loan|interest rate|kfs|approved)\b"
                          r"|होगी|होगा|होंगे|मिलेगा|\b(akan|nanti)\b")
+
+
+def is_statement_question(question: str) -> bool:
+    """A question this engine would answer for an application (used before one exists)."""
+    if FUTURE_LOAN.search(question.lower()):
+        return False
+    parsed = Parser(date.today() - timedelta(days=180), date.today()).parse(question)
+    return parsed.refusal is None and parsed.action is not None
+
+
+def guessed(case: Case, question: str) -> bool:
+    """Whether the keyword parser only guessed the action (so a model, if available, should interpret)."""
+    qa = StatementQA(case)
+    return Parser(qa.start, qa.end).parse(question).inferred
 
 
 def understands(case: Case, question: str, language: str = "en") -> bool:

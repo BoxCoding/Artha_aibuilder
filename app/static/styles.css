@@ -611,3 +611,22 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
 .guide-more-group { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; }
 .guide-more-q { padding: .1rem 0; border: 0; background: none; color: var(--ink); font-size: .85rem; text-align: left; }
 .guide-more-q:hover { color: var(--brand); text-decoration: underline; background: none; }
+
+/* Fill the form by voice, then review */
+.voice-bar { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px dashed var(--brand); border-radius: var(--radius-sm); background: var(--brand-wash); display: grid; gap: .5rem; }
+.voice-bar p { margin: 0; }
+.voice-typed { width: 100%; resize: vertical; font: inherit; }
+.voice-status:empty { display: none; }
+.small-btn.live, .mic-btn.live { border-color: var(--red); color: var(--red); }
+.field.has-mic { position: relative; }
+.field.has-mic input { padding-right: 2.6rem; }
+.mic-btn { position: absolute; right: .3rem; bottom: .3rem; width: 2.1rem; height: 2.1rem; padding: 0; border-radius: 50%; font-size: .9rem; }
+.field.has-mic .hint ~ .mic-btn, .field.has-mic:has(.hint) .mic-btn { bottom: 1.7rem; }
+.voice-filled { border-color: var(--amber) !important; background: var(--amber-wash); }
+.review-panel { margin: 1rem 0; padding: 1rem 1.1rem; border: 2px solid var(--brand); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.review-panel h3 { margin: 0 0 .4rem; }
+.review-list { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: .25rem 1rem; margin: .6rem 0; }
+.review-list dt { color: var(--ink-soft); font-size: .88rem; }
+.review-list dd { margin: 0; font-weight: 600; word-break: break-word; }
+.review-problems { color: var(--red); margin: .4rem 0 .8rem; padding-left: 1.2rem; }
+@media (max-width: 520px) { .review-list { grid-template-columns: 1fr; } .review-list dd { margin-bottom: .3rem; } }

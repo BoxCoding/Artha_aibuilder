@@ -79,3 +79,36 @@ def test_questions_endpoint_is_scoped_to_the_customers_own_case() -> None:
     assert [g["tag"] for g in body["groups"]] == ["next", "me", "help"]  # statement not read yet
     assert customer().get("/api/guide/questions", params={"case_id": case_id}).status_code == 404
     assert staff(Role.UNDERWRITER).get("/api/guide/questions").status_code == 403
+
+
+@pytest.fixture(scope="module")
+def saved_only() -> Case:
+    """An application saved from the form, before any statement is uploaded."""
+    case = build_training_case(persona_statement("meena"), 1)
+    case.transactions = []
+    case.applicant = ApplicantProfile(**APPLICANT)
+    return case
+
+
+@pytest.mark.parametrize("stage", ["no application", "saved", "statement read", "decided"])
+@pytest.mark.parametrize("lang", LANGS)
+def test_every_question_offered_at_a_stage_gets_a_real_answer(stage: str, lang: str, saved_only: Case,
+                                                               read_statement: Case, decided: Case) -> None:
+    from app.ai.question_bank import available
+
+    case = {"no application": None, "saved": saved_only, "statement read": read_statement, "decided": decided}[stage]
+    state = {"no application": {"step": "details", "action": "fill_form"},
+             "saved": {"step": "statements", "action": "upload", "documents": 0, "max_documents": 3}}.get(stage, STATE)
+    offered = [q for g in load() if available(g, case) for q in g["questions"] if available(q, case)]
+    assert offered
+    for q in offered:
+        reply, kind, _ = route(state, q[lang], lang, case)
+        assert kind != "unclear", f"[{stage}] {q[lang]!r} -> {reply[:100]}"
+
+
+def test_about_me_before_the_form_is_saved_offers_only_what_can_be_answered() -> None:
+    about = next(g for g in suggestions(None, "en") if g["tag"] == "me")
+    assert [q["text"] for q in about["questions"]] == ["Who are you?"]
+    reply, kind, _ = route({"step": "details", "action": "fill_form"}, "Am I salaried or self-employed?", "en", None)
+    assert kind == "pending:application"
+    assert reply.startswith("Please fill in the form first (or click Fill demo customer) and press Save and continue")

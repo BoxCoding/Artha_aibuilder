@@ -114,3 +114,15 @@ def test_guide_page_may_use_the_camera_and_microphone() -> None:
     policy = TestClient(app).get("/api/healthz").headers["Permissions-Policy"]
     assert "camera=(self)" in policy and "microphone=(self)" in policy and "geolocation=()" in policy
 
+
+
+def test_guide_answers_are_logged_with_their_kind_but_not_the_message(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    client = customer()
+    case_id = new_case(client)
+    with caplog.at_level(logging.INFO, logger="artha.api"):
+        ask(client, "What is my name?", case_id)
+    logged = [r for r in caplog.records if r.getMessage() == "guide_answer"]
+    assert logged and "kind=profile:name" in logged[-1].detail
+    assert all("What is my name" not in str(getattr(r, "detail", "")) for r in caplog.records)

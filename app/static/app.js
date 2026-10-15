@@ -391,6 +391,8 @@ function renderApply() {
   const form = $("apply-form");
   clear(form);
   state.caseId = null;
+  const clearBtn = el("button", "ghost small-btn", "Clear form");
+  clearBtn.type = "button";
 
   if (state.config?.demo_mode) {
     const fill = el("button", "ghost small-btn", "Fill demo customer");
@@ -403,8 +405,10 @@ function renderApply() {
       $("f-consent").checked = true;
     });
     const bar = el("div", "demo-hint");
-    bar.appendChild(el("p", "small", "Demo mode: fill the form with a fictional customer in one click."));
-    bar.appendChild(fill);
+    bar.appendChild(el("p", "small", "Demo mode: fill the form with a fictional customer in one click, or clear it."));
+    const demoActions = el("div", "row");
+    demoActions.append(fill, clearBtn);
+    bar.appendChild(demoActions);
     form.appendChild(bar);
   }
 
@@ -467,7 +471,9 @@ function renderApply() {
   const next = el("button", "stamp", "Save and continue to bank statements");
   const note = el("p", "small error-text notice-slot");
   note.setAttribute("role", "alert");
-  next.addEventListener("click", async () => {
+  const voiceFilled = new Set(); // ids of fields last filled by voice, still unedited
+  state.voiceFilled = voiceFilled;
+  const save = async () => {
     next.disabled = true;
     note.textContent = "";
     try {
@@ -487,6 +493,7 @@ function renderApply() {
       sections.forEach((box) => { box.disabled = true; });
       check.disabled = true;
       next.remove();
+      clearBtn.remove();
       note.textContent = "";
       if (created.warnings?.length) {
         const warn = el("div", "notice");
@@ -494,14 +501,220 @@ function renderApply() {
         warn.appendChild(document.createTextNode(created.warnings.join(" ")));
         form.appendChild(warn);
       }
+      voiceBox.remove();
+      form.querySelectorAll(".mic-btn").forEach((b) => b.remove());
       renderStatements(form);
       guide?.onView(currentView);
     } catch (error) {
       note.textContent = error.message;
       next.disabled = false;
+      next.classList.remove("hidden");
     }
+  };
+  next.addEventListener("click", () => showReview(form, voiceFilled, next, note, save));
+  // Clear form: back to how the form first appeared (selects keep their defaults), consent unticked.
+  const fields = Array.from(form.querySelectorAll("input, select, textarea"));
+  const initial = new Map(fields.map((n) => [n, n.type === "checkbox" ? n.checked : n.value]));
+  clearBtn.addEventListener("click", () => {
+    fields.forEach((n) => {
+      if (n.type === "checkbox") n.checked = initial.get(n); else n.value = initial.get(n);
+      n.removeAttribute("aria-invalid");
+      n.classList.remove("voice-filled");
+    });
+    voiceFilled.clear();
+    const typed = form.querySelector(".voice-typed");
+    if (typed) typed.value = "";
+    const status = form.querySelector(".voice-status");
+    if (status) status.textContent = "";
+    form.querySelector(".review-panel")?.remove();
+    next.classList.remove("hidden");
+    note.textContent = "";
+    form.querySelector(".notice")?.remove();
+    $("a-full_name")?.focus();
   });
-  form.append(next, note);
+  const voiceBox = voiceTools(form, voiceFilled);
+  form.insertBefore(voiceBox, form.querySelector(".form-section"));
+  const actions = el("div", "row form-actions");
+  actions.append(next);
+  if (!state.config?.demo_mode) actions.append(clearBtn); // in demo mode it sits beside "Fill demo customer"
+  form.append(actions, note);
+}
+
+/* ------------------------------------------------------------------ fill the form by voice, then review */
+
+const VOICE_FIELDS = {
+  full_name: "a-full_name", mobile: "a-mobile", email: "a-email", pan: "a-pan", date_of_birth: "a-date_of_birth",
+  business_name: "a-business_name", constitution: "a-constitution", industry: "a-industry",
+  business_start_year: "a-business_start_year", udyam_number: "a-udyam_number", gstin: "a-gstin",
+  address_line: "a-address_line", city: "a-city", state: "a-state", pincode: "a-pincode",
+  requested_amount: "f-amount", tenure_months: "f-tenure", loan_purpose: "a-loan_purpose",
+};
+const SPEECH_LOCALE = { en: "en-IN", hi: "hi-IN", id: "id-ID" };
+
+// Put a heard value into the form and mark it for the customer to check. Returns the field's label, or null.
+function fillFormField(key, value) {
+  const node = $(VOICE_FIELDS[key]);
+  if (!node || value === null || value === undefined || value === "") return null;
+  if (node.tagName === "SELECT" && !Array.from(node.options).some((o) => o.value === String(value))) return null;
+  node.value = String(value);
+  node.classList.add("voice-filled");
+  node.removeAttribute("aria-invalid");
+  state.voiceFilled?.add(node.id);
+  // Editing a value means the customer has checked it.
+  node.addEventListener("input", () => { node.classList.remove("voice-filled"); state.voiceFilled?.delete(node.id); },
+    { once: true });
+  return fieldLabel(node.id);
+}
+const fieldLabel = (id) => document.querySelector(`label[for="${id}"]`)?.textContent || id;
+
+// Speech goes to the server's extractor (code, not a language model); every value is marked for the customer
+// to check, and nothing is saved until they confirm the review.
+function voiceTools(form, voiceFilled) {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const box = el("div", "voice-bar");
+  box.appendChild(el("p", "small", Recognition
+    ? "Fill by voice: tap the mic and say your details in one go, for example \"My name is Priya Nair, mobile "
+      + "98450 12345, PAN ABCPN1234K, business Nair Tiffin Services, 12 Temple Street, Bengaluru, Karnataka 560041, "
+      + "I need 3 lakh for 24 months\". Or tap 🎤 on any field. You will check everything before it is saved."
+    : "Voice input is not available in this browser. Type what you would say and the form will be filled; you "
+      + "will check everything before it is saved."));
+  const status = el("p", "small voice-status");
+  status.setAttribute("aria-live", "polite");
+  const typed = el("textarea", "voice-typed");
+  typed.rows = 2;
+  typed.placeholder = "e.g. My name is Priya Nair, mobile 98450 12345, PAN ABCPN1234K, …";
+  const fromText = el("button", "ghost small-btn", "Fill from text");
+  fromText.type = "button";
+  const row = el("div", "row");
+
+  const apply = (fields) => {
+    const filled = Object.entries(fields || {}).map(([key, value]) => fillFormField(key, value)).filter(Boolean);
+    status.textContent = filled.length
+      ? `Filled ${filled.length} field(s): ${filled.join(", ")}. Please check them (marked in orange).`
+      : "I couldn't pick out any details from that. Try saying \"my name is…\", \"mobile…\", \"PAN…\".";
+  };
+  const extract = async (transcript, field) => {
+    if (!transcript.trim()) return;
+    try {
+      const body = await api("/api/form/voice", { method: "POST", body: JSON.stringify({ transcript, field }) });
+      apply(body.fields);
+      if (field && !Object.keys(body.fields).length) status.textContent = `Couldn't read ${fieldLabel(VOICE_FIELDS[field])} from "${transcript}". Please type it.`;
+    } catch (error) { status.textContent = error.message; }
+  };
+  fromText.addEventListener("click", () => extract(typed.value, null));
+
+  if (Recognition) {
+    const mic = el("button", "ghost small-btn", "🎤 Fill by voice");
+    mic.type = "button";
+    let rec = null;
+    let heard = "";
+    mic.addEventListener("click", () => {
+      if (rec) { rec.stop(); return; }
+      rec = new Recognition();
+      rec.lang = SPEECH_LOCALE[$("f-lang")?.value] || "en-IN";
+      rec.continuous = true;
+      rec.interimResults = true;
+      heard = "";
+      rec.onresult = (event) => {
+        heard = Array.from(event.results).map((r) => r[0].transcript).join(" ");
+        status.textContent = `Heard: ${heard}`;
+      };
+      rec.onerror = (event) => { status.textContent = `Microphone: ${event.error}. You can type below instead.`; };
+      rec.onend = () => {
+        rec = null;
+        mic.textContent = "🎤 Fill by voice";
+        mic.classList.remove("live");
+        typed.value = heard;
+        extract(heard, null);
+      };
+      rec.start();
+      mic.textContent = "■ Stop and fill";
+      mic.classList.add("live");
+      status.textContent = "Listening… say your details, then tap Stop.";
+    });
+    row.appendChild(mic);
+    // A mic on each typed field, for dictating just that one.
+    Object.entries(VOICE_FIELDS).forEach(([key, id]) => {
+      const node = $(id);
+      if (!node || node.tagName !== "INPUT") return;
+      const small = el("button", "ghost mic-btn", "🎤");
+      small.type = "button";
+      small.title = `Say your ${fieldLabel(id).toLowerCase()}`;
+      small.setAttribute("aria-label", small.title);
+      small.addEventListener("click", () => {
+        const one = new Recognition();
+        one.lang = SPEECH_LOCALE[$("f-lang")?.value] || "en-IN";
+        small.classList.add("live");
+        one.onresult = (event) => extract(event.results[0][0].transcript, key);
+        one.onerror = (event) => { status.textContent = `Microphone: ${event.error}.`; };
+        one.onend = () => small.classList.remove("live");
+        one.start();
+      });
+      node.insertAdjacentElement("afterend", small);
+      node.closest(".field")?.classList.add("has-mic");
+    });
+  }
+  row.append(fromText);
+  box.append(typed, row, status);
+  return box;
+}
+
+function showReview(form, voiceFilled, next, note, save) {
+  form.querySelector(".review-panel")?.remove();
+  const value = (id) => {
+    const node = $(id);
+    if (!node) return "";
+    return node.tagName === "SELECT" ? node.options[node.selectedIndex]?.text || "" : node.value.trim();
+  };
+  const problems = [];
+  const required = ["a-full_name", "a-mobile", "a-pan", "a-business_name", "a-address_line", "a-city", "a-pincode"];
+  required.filter((id) => !value(id)).forEach((id) => problems.push([id, `${fieldLabel(id)} is missing.`]));
+  const mobile = value("a-mobile").replace(/[\s-]/g, "").replace(/^(\+91|0)/, "");
+  if (value("a-mobile") && !/^[6-9]\d{9}$/.test(mobile)) problems.push(["a-mobile", "Mobile number should be 10 digits starting with 6-9."]);
+  if (value("a-pan") && !/^[A-Z]{5}\d{4}[A-Z]$/i.test(value("a-pan"))) problems.push(["a-pan", "PAN should look like ABCPE1234F."]);
+  if (value("a-pincode") && !/^[1-9]\d{5}$/.test(value("a-pincode"))) problems.push(["a-pincode", "PIN code should be 6 digits."]);
+  const amount = Number($("f-amount").value);
+  if (!(amount >= 50000 && amount <= 1000000)) problems.push(["f-amount", "Amount should be between ₹50,000 and ₹10,00,000."]);
+  if (!$("f-consent").checked) problems.push(["f-consent", "Please tick the consent box."]);
+
+  const panel = el("div", "review-panel");
+  panel.setAttribute("role", "region");
+  panel.setAttribute("aria-label", "Check your details");
+  panel.appendChild(el("h3", null, "Please check your details before saving"));
+  if (voiceFilled.size) panel.appendChild(el("p", "small", "🎤 = filled by voice. Make sure these are exactly right."));
+  const list = el("dl", "review-list");
+  Object.values(VOICE_FIELDS).concat(["f-lang"]).forEach((id) => {
+    const v = value(id);
+    if (!v) return;
+    const dt = el("dt", null, fieldLabel(id));
+    const dd = el("dd", null, id === "f-amount" ? `₹${Number(v).toLocaleString("en-IN")}` : v);
+    if (voiceFilled.has(id)) dd.appendChild(el("span", "voice-badge", " 🎤"));
+    list.append(dt, dd);
+  });
+  panel.appendChild(list);
+  if (problems.length) {
+    const ul = el("ul", "review-problems");
+    problems.forEach(([, text]) => ul.appendChild(el("li", null, text)));
+    panel.appendChild(ul);
+  }
+  const confirm = el("button", "stamp", "Confirm and save");
+  confirm.disabled = problems.length > 0;
+  const edit = el("button", "ghost", "Edit details");
+  const close = () => { panel.remove(); next.classList.remove("hidden"); };
+  edit.addEventListener("click", () => {
+    close();
+    const first = problems[0] ? $(problems[0][0]) : $([...voiceFilled][0] || "a-full_name");
+    first?.focus();
+    if (problems[0]) first?.setAttribute("aria-invalid", "true");
+  });
+  confirm.addEventListener("click", async () => { confirm.disabled = true; close(); await save(); });
+  const buttons = el("div", "row");
+  buttons.append(confirm, edit);
+  panel.appendChild(buttons);
+  note.textContent = "";
+  next.classList.add("hidden");
+  form.insertBefore(panel, form.querySelector(".form-actions"));
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderStatements(form) {
@@ -1771,6 +1984,26 @@ const GUIDE_ACTIONS = {
     setTimeout(() => button.classList.remove("guide-pulse"), 4000);
   },
   view_decision() { if (state.caseId) openMine({ case_id: state.caseId }); },
+  // The form interview: which fields are empty, filling one, and handing consent and the save to the customer.
+  form: {
+    open: () => currentView === "apply" && !state.caseId && Boolean($("a-full_name")) && !$("a-full_name").disabled,
+    isEmpty: (key) => { const node = $(VOICE_FIELDS[key]); return Boolean(node) && !node.value.trim(); },
+    set: (key, value) => fillFormField(key, value),
+    clear: (key) => {
+      const node = $(VOICE_FIELDS[key]);
+      if (!node || node.tagName === "SELECT") return;
+      node.value = "";
+      node.classList.remove("voice-filled");
+      state.voiceFilled?.delete(node.id);
+    },
+    focus: (key) => $(VOICE_FIELDS[key])?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    finish: () => {
+      const consent = $("f-consent");
+      consent?.scrollIntoView({ behavior: "smooth", block: "center" });
+      consent?.closest(".field")?.classList.add("guide-pulse");
+      setTimeout(() => consent?.closest(".field")?.classList.remove("guide-pulse"), 4000);
+    },
+  },
   async callback() {
     if (!state.caseId) return;
     await api(`/api/cases/${state.caseId}/callback`, { method: "POST",

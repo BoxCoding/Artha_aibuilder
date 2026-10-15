@@ -135,14 +135,37 @@ HELP_TEXT: dict[str, dict[str, str]] = {
         "id": "Tentu. Ketuk Minta ditelepon dan petugas pinjaman akan menelepon Anda dalam dua hari kerja.",
     },
     "identity": {
-        "en": "I'm Sahayak, an AI assistant that guides you through your loan application and answers questions about "
+        "en": "I'm Saarthi, an AI assistant that guides you through your loan application and answers questions about "
               "your statement. I'm not a person: a loan officer decides every application, and you can ask for a call "
               "back at any time.",
-        "hi": "मैं सहायक हूँ, एक AI सहायक जो आपके लोन आवेदन में मदद करता है और आपके स्टेटमेंट के बारे में सवालों के जवाब देता है। "
+        "hi": "मैं सारथी हूँ, एक AI सहायक जो आपके लोन आवेदन में मदद करता है और आपके स्टेटमेंट के बारे में सवालों के जवाब देता है। "
               "मैं कोई व्यक्ति नहीं हूँ: हर आवेदन का फ़ैसला लोन अधिकारी करते हैं, और आप कभी भी कॉल बैक माँग सकते हैं।",
-        "id": "Saya Sahayak, asisten AI yang memandu pengajuan pinjaman Anda dan menjawab pertanyaan tentang rekening "
+        "id": "Saya Saarthi, asisten AI yang memandu pengajuan pinjaman Anda dan menjawab pertanyaan tentang rekening "
               "koran Anda. Saya bukan manusia: setiap pengajuan diputuskan oleh petugas pinjaman, dan Anda bisa meminta "
               "ditelepon kapan saja.",
+    },
+    "my_name": {
+        "en": "Your application is in the name of {name}, for {business}.",
+        "hi": "आपका आवेदन {name} के नाम पर है, {business} के लिए।",
+        "id": "Pengajuan Anda atas nama {name}, untuk {business}.",
+    },
+    "my_name_unknown": {
+        "en": "I don't have your details yet. They are filled in on the first step of the application.",
+        "hi": "मेरे पास अभी आपकी जानकारी नहीं है। यह आवेदन के पहले चरण में भरी जाती है।",
+        "id": "Saya belum memiliki data Anda. Data diisi pada langkah pertama pengajuan.",
+    },
+    "needs_application": {
+        "en": "Please fill in the form first{demo} and press Save and continue, then ask me again. Once you upload "
+              "your statement, I can also answer questions about your money.",
+        "hi": "कृपया पहले फ़ॉर्म भरें{demo} और 'सेव करें और आगे बढ़ें' दबाएँ, फिर मुझसे दोबारा पूछें। स्टेटमेंट अपलोड होने के बाद "
+              "मैं आपके पैसों से जुड़े सवालों के जवाब भी दे सकता हूँ।",
+        "id": "Silakan isi formulir terlebih dahulu{demo} lalu tekan Simpan dan lanjutkan, kemudian tanyakan lagi. Setelah "
+              "rekening koran diunggah, saya juga bisa menjawab pertanyaan tentang keuangan Anda.",
+    },
+    "needs_application_demo": {
+        "en": " (or click Fill demo customer)",
+        "hi": " (या 'Fill demo customer' दबाएँ)",
+        "id": " (atau klik Fill demo customer)",
     },
     "unclear": {
         "en": "Sorry, I didn't catch that. You can ask me about your application, for example \"What do I do next?\", "
@@ -219,7 +242,9 @@ def _actions(state: dict[str, Any], lang: str, callback: bool) -> list[dict[str,
 
 # "What is EMI?" asks for a definition, not for the EMIs in the statement; "What is my income?" does not.
 GLOSSARY_TERM = re.compile(r"\b(apr|kfs|key fact|emi|nach|cooling[- ]off|prepay\w*|penal\w*|grievance|udyam|gstin|"
-                           r"cibil|aggregator|instalment|installment)\b", re.I)
+                           r"cibil|aggregator|account aggregator|instalment|installment|statement password)\b", re.I)
+# "What is my name?" is about the customer's own application; "What is your name?" is about the guide.
+MY_NAME = re.compile(r"\bmy (full )?name\b|मेरा नाम|nama saya", re.I)
 DEFINITION = re.compile(r"^\s*(what is|what's|whats|what are|what does|meaning of|define|explain|apa itu|apa arti)\b"
                         r"|(क्या है|क्या होता|मतलब)\s*[?।]?\s*$", re.I)
 
@@ -236,6 +261,12 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
         return SAFE_REDIRECT[lang], "redirect", False
     intent = intent_of(message)
     has_case = case is not None
+    if MY_NAME.search(message) and not re.search(r"\byour name\b|आपका नाम|तुम्हारा नाम|nama (kamu|anda)", message, re.I):
+        applicant = case.applicant if case is not None else None
+        if applicant is not None:
+            return HELP_TEXT["my_name"][lang].format(name=applicant.full_name, business=applicant.business_name), \
+                "profile:name", False
+        return HELP_TEXT["my_name_unknown"][lang], "profile:name", False
     if intent == "identity":
         return HELP_TEXT["identity"][lang], "identity", False
     if intent == "distress":
@@ -251,6 +282,12 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
     # Password and photo help use words no statement question does; ask them before reading the statement.
     if intent in ("password", "scan"):
         return HELP_TEXT[intent][lang], f"help:{intent}", False
+    if case is None and statement_qa.is_statement_question(message):
+        from app.config import get_settings
+
+        settings = get_settings()
+        demo = HELP_TEXT["needs_application_demo"][lang] if settings.demo_mode and not settings.is_prod else ""
+        return HELP_TEXT["needs_application"][lang].format(demo=demo), "pending:application", False
     if case is not None and statement_qa.understands(case, message, lang):
         answer = statement_qa.StatementQA(case, lang, spoken=True)
         action = statement_qa.Parser(answer.start, answer.end).parse(message).action
@@ -260,7 +297,7 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
     if intent == "decision" and case and case.decision and lang in case.explanations:
         draft = coach_offline(case.explanations[lang], message)
         return draft.reply, "decision", draft.offer_callback
-    if GLOSSARY_QUESTION.search(message):
+    if GLOSSARY_QUESTION.search(message) and GLOSSARY_TERM.search(message):
         glossary = _glossary(message)
         if glossary:
             return glossary, "glossary", False
@@ -297,11 +334,19 @@ def _step_text(state: dict[str, Any], lang: str) -> str:
 
 async def guide_reply(state: dict[str, Any], message: str, language: str, case: Case | None,
                       gateway: LLMGateway, meter: UsageMeter) -> dict[str, Any]:
+    from app.config import get_settings
+
     lang = _lang(language)
     reply, kind, callback = route(state, message, lang, case)
     author = "templates"
+    if case is not None and case.transactions and (
+            kind == "unclear" or (kind.startswith("statement:") and statement_qa.guessed(case, message))):
+        result = await statement_qa.answer_with_ai(case, message, lang, gateway, meter, spoken=True)
+        if result.understood and result.action:
+            reply, kind, author = result.text, f"statement:{result.action}", result.author
     # A model only rephrases free questions; greetings, safety cases and injections stay scripted.
-    if gateway.enabled and message.strip() and not detect(message) and intent_of(message) in ("next", "documents", "time"):
+    if (get_settings().ai_rephrase and gateway.enabled and message.strip() and not detect(message)
+            and kind in ("step", "help:documents", "help:time")):
         facts = {"language": lang, "journey": state, "approved_answer": reply, "user_message": message[:500]}
         try:
             draft = await gateway.structured(prompt_id="journey_guide", schema=CoachDraft, meter=meter,

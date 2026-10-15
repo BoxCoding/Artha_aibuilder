@@ -27,7 +27,7 @@ from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
                               enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
 from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
-                           AskRequest, CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
+                           AskRequest, CreateUserRequest, VoiceFormRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
                            case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
@@ -568,6 +568,19 @@ async def ask_statement(case_id: str, payload: AskRequest,
     return result
 
 
+@app.post("/api/form/voice")
+async def form_voice(payload: VoiceFormRequest, principal: Principal = Depends(limiter(60, 60))) -> dict[str, Any]:
+    """Turn what the customer said into form fields, for them to check before saving. Extracted by code, never by a
+    language model, and neither the transcript nor the values are logged or stored."""
+    from app.forms.voice_fill import FIELD_EXTRACTORS, extract
+
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    if payload.field is not None and payload.field not in FIELD_EXTRACTORS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown field.")
+    return extract(payload.transcript, payload.field)
+
+
 @app.get("/api/cases/{case_id}/journey")
 async def journey_state(case_id: str,
                         principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
@@ -609,7 +622,10 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
                                UsageMeter(budget=settings.token_budget_per_case))
     if payload.message.strip():
         get_store().audit(principal.uid, principal.role.value, "GUIDE_MESSAGE", case.case_id if case else "no-case",
-                          {"author": result["author"], "step": result["step"]})
+                          {"author": result["author"], "step": result["step"], "kind": result.get("kind")})
+        # Which route answered (never the message), so "it did not understand me" can be traced in the logs.
+        log.info("guide_answer", extra={"detail": f"kind={result.get('kind')} step={result['step']} "
+                                                  f"author={result['author']} language={language}"})
     return result
 
 

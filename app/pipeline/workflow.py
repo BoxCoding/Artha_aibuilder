@@ -24,7 +24,7 @@ from google.adk.workflow import START, JoinNode, Workflow, node
 from google.genai import types
 
 from app.ai.document_ai import categorise_with_gemini, extract_with_gemini, visual_inspection
-from app.ai.gateway import LLMUnavailable, UsageMeter, get_gateway
+from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter, get_gateway
 from app.ai.memo import write_and_review
 from app.cashflow.categorise import apply_rules
 from app.cashflow.features import add_computed_evidence, cashflow_signals, compute_features
@@ -123,11 +123,20 @@ def step(name: str) -> Callable[[Callable[[RunContext], Awaitable[dict[str, str 
 
 # --------------------------------------------------------------------------- nodes
 
+def _pipeline_gateway() -> LLMGateway:
+    """The model for the pipeline (memo, visual checks, scans, leftover categories), or none when PIPELINE_AI is
+    off, so the model can serve customers' questions without slowing every application down."""
+    settings = get_settings()
+    if settings.pipeline_ai:
+        return get_gateway()
+    return LLMGateway(settings.model_copy(update={"llm_mode": "offline"}))
+
+
 @step("read_documents")
 async def read_documents(rc: RunContext) -> dict[str, str | int | float]:
     """Deterministic readers first (template, then universal); a model only for what they cannot read,
     and a model's reading is trusted only if its running balances reconcile."""
-    gateway = get_gateway()
+    gateway = _pipeline_gateway()
     parsers = []
     for doc_id, data in rc.files.items():
         parsed, parser = await asyncio.to_thread(read_deterministic, data)
@@ -191,7 +200,7 @@ async def screen_content(rc: RunContext) -> dict[str, str | int | float]:
 async def categorise(rc: RunContext) -> dict[str, str | int | float]:
     unmatched = apply_rules(rc.case.transactions)
     by_model = 0
-    gateway = get_gateway()
+    gateway = _pipeline_gateway()
     settings = get_settings()
     share = len(unmatched) / max(1, len(rc.case.transactions))
     skipped = ""
@@ -223,7 +232,7 @@ async def forensics(rc: RunContext) -> dict[str, str | int | float]:
     signals = signals + network
     rc.case.signals = signals  # visual inspector uses rule findings to choose crops
     visual = 0
-    gateway = get_gateway()
+    gateway = _pipeline_gateway()
     if gateway.supports_vision and all(d.parser in ("template", "universal") for d in rc.case.documents):
         try:
             extra = await visual_inspection(rc.case, rc.files, gateway, rc.meter)
@@ -285,7 +294,7 @@ async def structuring(rc: RunContext) -> dict[str, str | int | float]:
 
 @step("memo_and_critic")
 async def memo_and_critic(rc: RunContext) -> dict[str, str | int | float]:
-    memo = await write_and_review(rc.case, get_gateway(), rc.meter)
+    memo = await write_and_review(rc.case, _pipeline_gateway(), rc.meter)
     rc.case.memo = memo
     return {"author": memo.author, "iterations": memo.iterations, "verdict": memo.critic_verdict,
             "dropped_claims": len(memo.dropped_claims)}

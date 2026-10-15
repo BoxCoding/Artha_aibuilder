@@ -18,8 +18,11 @@ def load() -> list[dict[str, Any]]:
     return yaml.safe_load(PATH.read_text(encoding="utf-8"))["groups"]
 
 
-def available(group: dict[str, Any], case: Case | None) -> bool:
-    needs = group.get("needs", "always")
+def available(item: dict[str, Any], case: Case | None) -> bool:
+    """Whether a group or question can be answered yet for this application."""
+    needs = item.get("needs", "always")
+    if needs == "case":
+        return case is not None
     if needs == "statement":
         return bool(case and case.transactions)
     if needs == "decision":
@@ -30,6 +33,13 @@ def available(group: dict[str, Any], case: Case | None) -> bool:
 def suggestions(case: Case | None, lang: str) -> list[dict[str, Any]]:
     """The groups that make sense for this application right now, in one language."""
     lang = lang if lang in LANGS else "en"
-    return [{"tag": g["tag"], "label": g["label"][lang],
-             "questions": [{"text": q[lang], "featured": bool(q.get("featured"))} for q in g["questions"]]}
-            for g in load() if available(g, case)]
+    groups = []
+    for g in load():
+        if not available(g, case):
+            continue
+        questions = [{"text": q[lang], "featured": bool(q.get("featured"))} for q in g["questions"] if available(q, case)]
+        if questions:
+            if not any(q["featured"] for q in questions):
+                questions[0]["featured"] = True
+            groups.append({"tag": g["tag"], "label": g["label"][lang], "questions": questions})
+    return groups

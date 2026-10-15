@@ -72,6 +72,11 @@ class CoachRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
 
 
+class VoiceFormRequest(BaseModel):
+    transcript: str = Field(min_length=1, max_length=2000)
+    field: str | None = Field(default=None, max_length=40)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     language: str | None = Field(default=None, max_length=5)

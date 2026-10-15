@@ -5,9 +5,11 @@
 # its three phrasings and its `expect`, then run the tests; if it fails, the guide needs a keyword for it.
 #
 # needs:  always    - shown from the first screen
+#         case      - shown once the application is saved (answers use the customer's own details)
 #         statement - shown once the statement has been read (the answers come from its transactions)
 #         decision  - shown once there is a decision on the application
 # expect: step | identity | help:<topic> | glossary | statement:<action> | decision
+# A question may carry its own `needs`, stricter than its group's.
 # featured: shown as a chip when the tag is selected (the rest are under "More questions")
 
 groups:
@@ -33,6 +35,16 @@ groups:
       - {en: "What is my average monthly income?", hi: "मेरी औसत मासिक आमदनी कितनी है?", id: "Berapa rata-rata pendapatan bulanan saya?", expect: "statement:average"}
       - {en: "Which month had the highest income?", hi: "किस महीने आमदनी सबसे ज़्यादा रही?", id: "Bulan apa pendapatan tertinggi?", expect: "statement:which_month"}
       - {en: "How much cash did I deposit?", hi: "मैंने कितना नकद जमा किया?", id: "Berapa setoran tunai saya?", expect: "statement:total"}
+      - {en: "What share of my income comes through UPI?", hi: "मेरी आमदनी में UPI का हिस्सा कितना है?", id: "Berapa persen pendapatan saya lewat UPI?", expect: "statement:share"}
+      - {en: "What was my biggest deposit?", hi: "मेरी सबसे बड़ी जमा राशि कितनी थी?", id: "Setoran terbesar saya berapa?", expect: "statement:largest"}
+
+  - tag: customers
+    label: {en: "Customers and suppliers", hi: "ग्राहक और सप्लायर", id: "Pelanggan dan pemasok"}
+    needs: statement
+    questions:
+      - {en: "Who are my top customers?", hi: "मेरे सबसे बड़े ग्राहक कौन हैं?", id: "Siapa pelanggan terbesar saya?", expect: "statement:top_parties", featured: true}
+      - {en: "Who do I pay the most?", hi: "मैं सबसे ज़्यादा भुगतान किसे करता हूँ?", id: "Saya paling banyak bayar ke siapa?", expect: "statement:top_parties", featured: true}
+      - {en: "How much does my income depend on one customer?", hi: "मेरी आमदनी एक ग्राहक पर कितनी निर्भर है?", id: "Seberapa besar pendapatan saya bergantung pada satu pelanggan?", expect: "statement:concentration", featured: true}
 
   - tag: spending
     label: {en: "My spending", hi: "मेरा खर्च", id: "Pengeluaran saya"}
@@ -54,6 +66,7 @@ groups:
       - {en: "How much EMI did I pay?", hi: "मैंने कितनी EMI भरी?", id: "Berapa cicilan yang saya bayar?", expect: "statement:total", featured: true}
       - {en: "Any bounced payments?", hi: "क्या कोई भुगतान बाउंस हुआ?", id: "Ada pembayaran yang ditolak?", expect: "statement:health", featured: true}
       - {en: "How much did the bank charge me?", hi: "बैंक ने कितना शुल्क लिया?", id: "Berapa biaya bank yang saya bayar?", expect: "statement:total"}
+      - {en: "Did I receive any loan money?", hi: "क्या मुझे कोई लोन की रकम मिली?", id: "Apakah saya menerima pencairan pinjaman?", expect: "statement:total"}
 
   - tag: balance
     label: {en: "Balance", hi: "बैलेंस", id: "Saldo"}
@@ -69,8 +82,11 @@ groups:
     label: {en: "About me", hi: "मेरे बारे में", id: "Tentang saya"}
     needs: always
     questions:
-      - {en: "Am I salaried or self-employed?", hi: "क्या मैं वेतनभोगी हूँ या स्वरोज़गार?", id: "Apakah saya karyawan atau wiraswasta?", expect: "statement:profile", featured: true}
-      - {en: "What is my business?", hi: "मेरा पेशा क्या है?", id: "Apa pekerjaan saya?", expect: "statement:profile", featured: true}
+      - {en: "Am I salaried or self-employed?", hi: "क्या मैं वेतनभोगी हूँ या स्वरोज़गार?", id: "Apakah saya karyawan atau wiraswasta?", needs: case, expect: "statement:profile", featured: true}
+      - {en: "What is my business?", hi: "मेरा पेशा क्या है?", id: "Apa pekerjaan saya?", needs: case, expect: "statement:profile", featured: true}
+      - {en: "What is my salary?", hi: "मेरा वेतन कितना है?", id: "Berapa gaji saya?", needs: case, expect: "statement:profile"}
+      - {en: "What is my name?", hi: "मेरा नाम क्या है?", id: "Siapa nama saya?", needs: case, expect: "profile:name"}
+      - {en: "What period does my statement cover?", hi: "मेरा स्टेटमेंट किस अवधि का है?", id: "Rekening koran saya mencakup periode apa?", needs: statement, expect: "statement:period"}
       - {en: "Who are you?", hi: "आप कौन हैं?", id: "Siapa kamu?", expect: identity, featured: true}
 
   - tag: decision
