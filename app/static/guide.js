@@ -25,6 +25,7 @@ const UI = {
         unmute: "Unmute voice", end: "End call", expand: "Larger", shrink: "Smaller", minimise: "Minimise",
         voice: "Voice", auto: "Best available", camNote: "Your camera is shown only to you.", interrupt: "Tap me to interrupt",
         aiBadge: "AI presenter", connecting: "Connecting the video presenter…", sound: "🔊 Tap to turn on sound",
+        topics: "Ask about", more: "More questions", moreHint: "Everything I can answer for your application right now",
         avatarEnded: "The video presenter has ended. I'll carry on from here.",
         noMic: "The microphone is blocked here. You can type your questions instead.",
         noCam: "The camera could not be opened here. Talking and typing still work.",
@@ -35,6 +36,7 @@ const UI = {
         you: "आप", mic: "बिना हाथ लगाए बात करें", micOff: "सुनना बंद करें", cam: "कैमरा", cc: "कैप्शन", mute: "आवाज़ बंद",
         unmute: "आवाज़ चालू", end: "कॉल समाप्त", expand: "बड़ा करें", shrink: "छोटा करें", minimise: "छोटा करके रखें",
         voice: "आवाज़", auto: "सबसे अच्छी उपलब्ध", aiBadge: "AI प्रस्तुतकर्ता", sound: "🔊 आवाज़ चालू करने के लिए दबाएँ",
+        topics: "किस बारे में पूछें", more: "और सवाल", moreHint: "आपके आवेदन के लिए अभी मैं इन सबका जवाब दे सकता हूँ",
         connecting: "वीडियो प्रस्तुतकर्ता जुड़ रहा है…", avatarEnded: "वीडियो प्रस्तुतकर्ता का सत्र खत्म हो गया। मैं यहीं से आगे मदद करूँगा।", camNote: "आपका कैमरा सिर्फ़ आपको दिखता है।", interrupt: "रोकने के लिए मुझे दबाएँ",
         noMic: "यहाँ माइक्रोफ़ोन बंद है। आप अपना सवाल लिख सकते हैं।",
         noCam: "यहाँ कैमरा नहीं खुल सका। बात करना और लिखना अब भी काम करता है।",
@@ -45,6 +47,7 @@ const UI = {
         you: "Anda", mic: "Bicara tanpa tangan", micOff: "Berhenti mendengarkan", cam: "Kamera", cc: "Teks", mute: "Bisukan suara",
         unmute: "Suarakan", end: "Akhiri panggilan", expand: "Perbesar", shrink: "Perkecil", minimise: "Kecilkan",
         voice: "Suara", auto: "Terbaik yang tersedia", aiBadge: "Presenter AI", sound: "🔊 Ketuk untuk menyalakan suara",
+        topics: "Tanya tentang", more: "Pertanyaan lain", moreHint: "Semua yang bisa saya jawab untuk pengajuan Anda saat ini",
         connecting: "Menghubungkan presenter video…", avatarEnded: "Sesi presenter video telah berakhir. Saya lanjutkan dari sini.", camNote: "Kamera Anda hanya terlihat oleh Anda.", interrupt: "Ketuk saya untuk menyela",
         noMic: "Mikrofon diblokir di sini. Anda bisa mengetik pertanyaan.",
         noCam: "Kamera tidak bisa dibuka di sini. Bicara dan mengetik tetap berfungsi.",
@@ -262,7 +265,14 @@ export function createGuide({ api, context, actions }) {
   const body = el("div", "guide-body");
   const actionRow = el("div", "guide-actions");
   const transcript = el("div", "guide-transcript");
+  const topics = el("div", "guide-topics");
+  topics.setAttribute("role", "tablist");
   const chips = el("div", "chips guide-chips");
+  const more = el("details", "guide-more");
+  const moreSummary = el("summary", "small");
+  const moreHint = el("p", "small muted");
+  const moreList = el("div", "guide-more-list");
+  more.append(moreSummary, moreHint, moreList);
   const askRow = el("div", "guide-ask");
   const input = el("input");
   input.maxLength = 500;
@@ -273,7 +283,7 @@ export function createGuide({ api, context, actions }) {
   const voicePick = el("select", "guide-select");
   voiceRow.append(voiceLabel, voicePick);
   const note = el("p", "small muted guide-note");
-  body.append(actionRow, transcript, chips, askRow, voiceRow, note);
+  body.append(actionRow, transcript, topics, chips, more, askRow, voiceRow, note);
 
   call.append(top, stage, progress, controls, body);
   document.body.append(launcher, call);
@@ -707,6 +717,62 @@ export function createGuide({ api, context, actions }) {
     if (g.convo && g.open) listen();
   }
 
+  /* ---------------------------------------------------------------- suggested questions, by tag */
+
+  const questions = { groups: null, tag: null, key: null, tags: "" };
+  async function loadQuestions() {
+    const { caseId } = context();
+    const key = `${g.lang}:${caseId || ""}:${g.lastKey || ""}`;
+    if (questions.key === key) return;
+    questions.key = key;
+    try {
+      const params = new URLSearchParams({ language: g.lang, ...(caseId ? { case_id: caseId } : {}) });
+      questions.groups = (await api(`/api/guide/questions?${params}`)).groups;
+    } catch {
+      questions.groups = null;
+    }
+    // When new tags appear (the statement was read, a decision arrived), lead with them: that is what the
+    // customer can now ask about. Otherwise keep the tag they picked.
+    const tags = (questions.groups || []).map((group) => group.tag);
+    if (tags.join() !== questions.tags) {
+      questions.tags = tags.join();
+      questions.tag = ["decision", "income", "next"].find((tag) => tags.includes(tag)) || tags[0] || null;
+    }
+    renderQuestions();
+  }
+  function questionButton(text, className) {
+    const button = el("button", className, text);
+    button.type = "button";
+    button.addEventListener("click", () => { more.open = false; ask(text); });
+    return button;
+  }
+  function renderQuestions() {
+    const groups = questions.groups;
+    if (!groups?.length) {
+      topics.replaceChildren();
+      more.classList.add("hidden");
+      chips.replaceChildren(...UI[g.lang].chips.map((q) => questionButton(q)));
+      return;
+    }
+    topics.replaceChildren(el("span", "small muted", UI[g.lang].topics), ...groups.map((group) => {
+      const pill = el("button", "guide-topic", group.label);
+      pill.type = "button";
+      pill.setAttribute("role", "tab");
+      pill.setAttribute("aria-selected", String(group.tag === questions.tag));
+      pill.addEventListener("click", () => { questions.tag = group.tag; renderQuestions(); });
+      return pill;
+    }));
+    const current = groups.find((group) => group.tag === questions.tag) || groups[0];
+    chips.replaceChildren(...current.questions.filter((q) => q.featured).map((q) => questionButton(q.text)));
+    more.classList.remove("hidden");
+    moreList.replaceChildren(...groups.map((group) => {
+      const section = el("div", "guide-more-group");
+      section.appendChild(el("b", "small", group.label));
+      group.questions.forEach((q) => section.appendChild(questionButton(q.text, "guide-more-q")));
+      return section;
+    }));
+  }
+
   // Greet again only when the customer's step actually changes, not on every repaint.
   async function refresh() {
     if (!g.open || !g.user) return;
@@ -727,6 +793,7 @@ export function createGuide({ api, context, actions }) {
       try { key = `${caseId}:${(await api(`/api/cases/${caseId}/journey`)).step}`; } catch { return; }
     }
     if (key !== g.lastKey) { g.lastKey = key; ask(""); }
+    loadQuestions();
   }
 
   /* ---------------------------------------------------------------- window states */
@@ -747,6 +814,7 @@ export function createGuide({ api, context, actions }) {
     launcher.classList.add("hidden");
     startLife();
     g.lastKey = null;
+    loadQuestions(); // the questions do not need to wait for the presenter
     // Connect the photoreal presenter first (when configured), so the greeting comes from one voice.
     Promise.resolve(startAvatar()).finally(refresh);
   }
@@ -796,11 +864,9 @@ export function createGuide({ api, context, actions }) {
     captionBar.classList.toggle("hidden", !g.captions);
     call.classList.toggle("expanded", g.expanded);
     langPick.value = g.lang;
-    chips.replaceChildren(...t.chips.map((q) => {
-      const chip = el("button", null, q);
-      chip.addEventListener("click", () => ask(q));
-      return chip;
-    }));
+    moreSummary.textContent = t.more;
+    moreHint.textContent = t.moreHint;
+    renderQuestions();
     fillVoicePicker();
   }
 

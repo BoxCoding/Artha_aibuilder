@@ -1,0 +1,86 @@
+# Questions the credit officer's co-pilot suggests, grouped by tag.
+#
+# tests/test_copilot_questions.py asks every one of them on real cases and checks the answer comes from the
+# route named in `expect`, so a listed question cannot be misrouted. To add one, add it with its `expect`
+# and run the tests.
+#
+# expect: statement:<action> | drivers | models | improve | why | findings | name_check | round_trip | scenario |
+#         structure | affordability | compliance:<aml|cash|kfs|four_eyes|checklist> | knowledge
+# featured: shown as a chip when the tag is selected (the rest are under "More questions")
+
+groups:
+  - tag: assessment
+    label: Assessment
+    questions:
+      - {q: "Why this recommendation?", expect: why, featured: true}
+      - {q: "What are the main risk drivers?", expect: drivers, featured: true}
+      - {q: "Do the two models disagree?", expect: models, featured: true}
+      - {q: "What would move this to a better band?", expect: improve}
+
+  - tag: integrity
+    label: Integrity
+    questions:
+      - {q: "What did the integrity checks find?", expect: findings, featured: true}
+      - {q: "Any red flags?", expect: findings, featured: true}
+      - {q: "Is the statement in the applicant's name?", expect: name_check, featured: true}
+      - {q: "Any signs of editing?", expect: findings}
+      - {q: "Any money sent back and forth with the same party?", expect: round_trip}
+
+  - tag: structuring
+    label: Structuring
+    questions:
+      - {q: "What if we lend 3,00,000 over 36 months?", expect: scenario, featured: true}
+      - {q: "What if we lend 2 lakh over 24 months?", expect: scenario}
+      - {q: "What's the largest amount policy approves?", expect: structure, featured: true}
+      - {q: "What EMI can they afford?", expect: affordability, featured: true}
+
+  - tag: cashflow
+    label: Cash flow
+    questions:
+      - {q: "Which month had the lowest income?", expect: "statement:which_month", featured: true}
+      - {q: "Is income growing?", expect: "statement:trend", featured: true}
+      - {q: "Where does the money go?", expect: "statement:breakdown", featured: true}
+      - {q: "What share of income is cash?", expect: "statement:share"}
+      - {q: "What share of income comes through UPI?", expect: "statement:share"}
+      - {q: "What is the average monthly income?", expect: "statement:average"}
+      - {q: "What was the biggest deposit?", expect: "statement:largest"}
+
+  - tag: obligations
+    label: Obligations
+    questions:
+      - {q: "Total EMI paid?", expect: "statement:total", featured: true}
+      - {q: "Any bounced payments?", expect: "statement:health", featured: true}
+      - {q: "How much were the bank charges?", expect: "statement:total"}
+      - {q: "Any loan money received?", expect: "statement:total"}
+
+  - tag: balance
+    label: Balance
+    questions:
+      - {q: "What is the average balance?", expect: "statement:balance", featured: true}
+      - {q: "What was the lowest balance?", expect: "statement:balance", featured: true}
+      - {q: "How many days was the balance very low?", expect: "statement:health"}
+      - {q: "Average balance in the last 3 months?", expect: "statement:balance"}
+
+  - tag: counterparties
+    label: Counterparties
+    questions:
+      - {q: "Who are the top customers?", expect: "statement:top_parties", featured: true}
+      - {q: "Who are the top suppliers?", expect: "statement:top_parties", featured: true}
+      - {q: "How concentrated is income in one payer?", expect: "statement:concentration", featured: true}
+      - {q: "Any money sent back and forth with the same party?", expect: round_trip}
+
+  - tag: compliance
+    label: Compliance
+    questions:
+      - {q: "Any watchlist hits?", expect: "compliance:aml", featured: true}
+      - {q: "Is there reportable cash?", expect: "compliance:cash", featured: true}
+      - {q: "Has the KFS been accepted?", expect: "compliance:kfs"}
+      - {q: "Does this need a second approver?", expect: "compliance:four_eyes", featured: true}
+      - {q: "Anything blocking approval?", expect: "compliance:checklist"}
+      - {q: "What is the four-eyes rule?", expect: knowledge}
+
+  - tag: profile
+    label: Profile
+    questions:
+      - {q: "Is the applicant salaried?", expect: "statement:profile", featured: true}
+      - {q: "What period does the statement cover?", expect: "statement:period", featured: true}

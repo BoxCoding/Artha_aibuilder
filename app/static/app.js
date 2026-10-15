@@ -9,11 +9,26 @@ const state = { me: null, config: null, authMode: "signin", caseId: null, caseDa
 
 const COPY = {
   en: { ask: ["Why this decision?", "What can I improve?", "What will I repay?", "I want to speak to someone"],
-        placeholder: "Type your question", send: "Send" },
+        placeholder: "Type your question", send: "Send",
+        statementTitle: "Ask about your statement",
+        statementNote: "Answers come straight from the transactions in your statement, with the rows they used.",
+        statementAsk: ["How much did I receive through UPI?", "Where does my money go?", "Which month had the lowest income?",
+                       "What was my lowest balance?", "Any bounced payments?"],
+        statementPlaceholder: "e.g. Total rent paid in June?", rowsLabel: "Rows used" },
   hi: { ask: ["यह फ़ैसला क्यों?", "मैं क्या सुधार करूँ?", "मुझे कितना चुकाना होगा?", "मुझे किसी से बात करनी है"],
-        placeholder: "अपना सवाल लिखें", send: "भेजें" },
+        placeholder: "अपना सवाल लिखें", send: "भेजें",
+        statementTitle: "अपने स्टेटमेंट के बारे में पूछें",
+        statementNote: "जवाब सीधे आपके स्टेटमेंट के लेन-देन से आते हैं, इस्तेमाल की गई पंक्तियों के साथ।",
+        statementAsk: ["UPI से मुझे कितना मिला?", "मेरा पैसा कहाँ जाता है?", "किस महीने आमदनी सबसे कम रही?",
+                       "मेरा सबसे कम बैलेंस कितना था?", "क्या कोई भुगतान बाउंस हुआ?"],
+        statementPlaceholder: "जैसे: जून में कुल किराया कितना दिया?", rowsLabel: "इस्तेमाल की गई पंक्तियाँ" },
   id: { ask: ["Kenapa keputusan ini?", "Apa yang bisa saya perbaiki?", "Berapa cicilan saya?", "Saya ingin bicara dengan petugas"],
-        placeholder: "Tulis pertanyaan Anda", send: "Kirim" },
+        placeholder: "Tulis pertanyaan Anda", send: "Kirim",
+        statementTitle: "Tanya tentang rekening koran Anda",
+        statementNote: "Jawaban langsung dari transaksi di rekening koran Anda, beserta baris yang dipakai.",
+        statementAsk: ["Berapa yang saya terima lewat UPI?", "Ke mana uang saya pergi?", "Bulan apa pendapatan terendah?",
+                       "Berapa saldo terendah saya?", "Ada pembayaran yang ditolak?"],
+        statementPlaceholder: "mis. Total sewa yang dibayar pada Juni?", rowsLabel: "Baris yang dipakai" },
 };
 
 async function api(path, options = {}) {
@@ -651,6 +666,7 @@ function instantResult(detail) {
 
 function watchProgress() {
   show("progress");
+  document.querySelectorAll(".statement-ask").forEach((node) => node.remove()); // belongs to a read statement
   const staffView = state.me.role !== "borrower";
   $("progress-title").textContent = staffView ? "Assessing the application" : "Reading your statements";
   $("progress-note").textContent = "The recommendation is usually ready within seconds; the written analysis "
@@ -733,6 +749,7 @@ async function waitForDecision() {
   const mine = el("button", "ghost", "My applications");
   mine.addEventListener("click", loadMine);
   actions.append(check, mine);
+  if (state.me.role !== "underwriter") $("view-progress").appendChild(statementPanel());
   if (state.config?.demo_mode) actions.appendChild(demoHint(
     "Demo: nobody else is signed in to review this. Switch to the underwriter to decide it now.",
     "Review it now as Arun Prakash (underwriter)",
@@ -900,6 +917,7 @@ function renderOutcome(data) {
     body.appendChild(box);
   }
   body.appendChild(el("p", "small muted", explanation.contact || ""));
+  body.appendChild(statementPanel(explanation.language));
 
   const copy = COPY[explanation.language] || COPY.en;
   const chips = $("coach-chips");
@@ -914,6 +932,58 @@ function renderOutcome(data) {
   $("coach-send").textContent = copy.send;
   $("coach-send").onclick = () => sendCoach($("coach-input").value.trim());
   $("coach-input").onkeydown = (event) => { if (event.key === "Enter") sendCoach($("coach-input").value.trim()); };
+}
+
+/* ------------------------------------------------------------------ ask about your statement */
+
+// One panel per page: rebuilt when the page is, so it always talks about the application on screen.
+function statementPanel(language) {
+  document.querySelectorAll(".statement-ask").forEach((node) => node.remove());
+  const lang = COPY[language || state.lang] ? (language || state.lang) : "en";
+  const copy = COPY[lang];
+  const box = el("div", "coach statement-ask");
+  box.appendChild(el("h2", null, copy.statementTitle));
+  box.appendChild(el("p", "small muted", copy.statementNote));
+  const chips = el("div", "chips");
+  const thread = el("div", "thread");
+  const input = control("input", "ask-input", { maxLength: 500, placeholder: copy.statementPlaceholder });
+  const send = el("button", null, copy.send);
+  const row = el("div", "row");
+  row.append(input, send);
+  const ask = async (question) => {
+    if (!question) return;
+    thread.appendChild(el("div", "bubble me", question));
+    input.value = "";
+    try {
+      const reply = await api(`/api/cases/${state.caseId}/ask`, { method: "POST", body: JSON.stringify({ question, language: lang }) });
+      const bubble = el("div", "bubble bot");
+      bubble.appendChild(el("p", null, reply.answer));
+      if (reply.rows?.length) {
+        const details = el("details", "ask-rows");
+        details.appendChild(el("summary", "small", `${copy.rowsLabel} (${reply.rows.length})`));
+        const table = el("table", "ask-table");
+        reply.rows.forEach((r) => {
+          const tr = el("tr");
+          tr.append(el("td", null, fmtDate(r.date)), el("td", null, r.description),
+                    el("td", `amt ${r.direction}`, `${r.direction === "in" ? "+" : "−"}₹${r.amount}`), el("td", "muted", `p.${r.page}`));
+          table.appendChild(tr);
+        });
+        details.appendChild(table);
+        bubble.appendChild(details);
+      }
+      thread.appendChild(bubble);
+    } catch (error) { thread.appendChild(el("div", "bubble bot", error.message)); }
+    thread.lastChild.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  copy.statementAsk.forEach((q) => {
+    const chip = el("button", null, q);
+    chip.addEventListener("click", () => ask(q));
+    chips.appendChild(chip);
+  });
+  send.addEventListener("click", () => ask(input.value.trim()));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") ask(input.value.trim()); });
+  box.append(chips, thread, row);
+  return box;
 }
 
 async function sendCoach(message) {
@@ -1269,14 +1339,7 @@ function renderPanel() {
 function renderCopilot(panel) {
   panel.appendChild(el("p", "small muted", "Ask about this case. The agent holds read-only tools scoped to this "
     + "applicant only, and cites the rows it used."));
-  const chips = el("div", "chips");
-  ["Why this recommendation?", "What did the integrity checks find?",
-   "Show me the largest cash deposits", "What if we lend 3,00,000 over 36 months?"].forEach((question) => {
-    const chip = el("button", null, question);
-    chip.addEventListener("click", () => askCopilot(question));
-    chips.appendChild(chip);
-  });
-  panel.appendChild(chips);
+  panel.appendChild(copilotQuestions());
 
   const thread = el("div", "thread");
   thread.id = "copilot-thread";
@@ -1295,6 +1358,57 @@ function renderCopilot(panel) {
   send.addEventListener("click", () => askCopilot(input.value.trim()));
   row.append(input, send);
   panel.appendChild(row);
+}
+
+// Suggested questions by tag, from the officer question bank (every one is tested to route correctly).
+const COPILOT_FALLBACK = ["Why this recommendation?", "What did the integrity checks find?",
+  "Which month had the lowest income?", "What if we lend 3,00,000 over 36 months?"];
+function copilotQuestions() {
+  const box = el("div", "copilot-questions");
+  const topics = el("div", "guide-topics");
+  topics.setAttribute("role", "tablist");
+  const chips = el("div", "chips");
+  const more = el("details", "guide-more");
+  const list = el("div", "guide-more-list");
+  more.append(el("summary", "small", "More questions"), list);
+  box.append(topics, chips, more);
+  const button = (text, className) => {
+    const b = el("button", className, text);
+    b.type = "button";
+    b.addEventListener("click", () => { more.open = false; askCopilot(text); });
+    return b;
+  };
+  const draw = () => {
+    const groups = state.copilotGroups;
+    if (!groups?.length) {
+      chips.replaceChildren(...COPILOT_FALLBACK.map((q) => button(q)));
+      more.classList.add("hidden");
+      return;
+    }
+    state.copilotTag = groups.some((g) => g.tag === state.copilotTag) ? state.copilotTag : groups[0].tag;
+    topics.replaceChildren(el("span", "small muted", "Ask about"), ...groups.map((g) => {
+      const pill = el("button", "guide-topic", g.label);
+      pill.type = "button";
+      pill.setAttribute("role", "tab");
+      pill.setAttribute("aria-selected", String(g.tag === state.copilotTag));
+      pill.addEventListener("click", () => { state.copilotTag = g.tag; draw(); });
+      return pill;
+    }));
+    const current = groups.find((g) => g.tag === state.copilotTag);
+    chips.replaceChildren(...current.questions.filter((q) => q.featured).map((q) => button(q.text)));
+    more.classList.remove("hidden");
+    list.replaceChildren(...groups.map((g) => {
+      const section = el("div", "guide-more-group");
+      section.appendChild(el("b", "small", g.label));
+      g.questions.forEach((q) => section.appendChild(button(q.text, "guide-more-q")));
+      return section;
+    }));
+  };
+  draw();
+  if (!state.copilotGroups) {
+    api("/api/copilot/questions").then((body) => { state.copilotGroups = body.groups; draw(); }).catch(() => {});
+  }
+  return box;
 }
 
 function copilotTurn(turn) {
