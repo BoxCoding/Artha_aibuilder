@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -118,7 +119,7 @@ class LLMGateway:
             raise LLMUnavailable("token budget exhausted for this case")
         prompt = load_prompt(prompt_id)
         if self._ollama is not None:
-            return await self._ollama_structured(prompt, schema, contents, meter, model, attempts)
+            return await self._ollama_structured(prompt, schema, contents, meter, attempts)
         from google.genai import types
 
         contents = [types.Part.from_bytes(data=c.data, mime_type=c.mime_type) if isinstance(c, Blob) else c
@@ -132,29 +133,15 @@ class LLMGateway:
             # current Gemini models. Reasoning depth is controlled with the thinking level instead.
             thinking_config=types.ThinkingConfig(thinking_level=thinking) if thinking else None,
         )
-        last_error: Exception | None = None
-        for attempt in range(1, attempts + 1):
-            started = time.monotonic()
-            try:
-                response = await self._client.aio.models.generate_content(model=model_id, contents=contents,
-                                                                          config=config)
-                ms = int((time.monotonic() - started) * 1000)
-                tokens = int(getattr(response.usage_metadata, "total_token_count", 0) or 0)
-                meter.charge(prompt, model_id, tokens, ms)
-                return schema.model_validate_json(response.text or "")
-            except ValidationError as exc:
-                last_error = exc
-                log.warning("llm_schema_invalid", extra={"prompt": prompt.id, "attempt": attempt})
-            except Exception as exc:  # noqa: BLE001 - SDK raises many transport-level types
-                last_error = exc
-                log.warning("llm_call_failed", extra={"prompt": prompt.id, "attempt": attempt,
-                                                      "error_type": type(exc).__name__})
-            await asyncio.sleep(min(8.0, 0.8 * 2 ** attempt + random.random()))
-        raise LLMUnavailable(f"{prompt.id} failed after {attempts} attempts") from last_error
 
+        async def call() -> tuple[str, str, int]:
+            response = await self._client.aio.models.generate_content(model=model_id, contents=contents, config=config)
+            return response.text or "", model_id, int(getattr(response.usage_metadata, "total_token_count", 0) or 0)
+
+        return await self._validated(prompt, schema, meter, attempts, call, backoff=0.8, cap=8.0)
 
     async def _ollama_structured(self, prompt: Prompt, schema: type[T], contents: list[object], meter: UsageMeter,
-                                 model: str | None, attempts: int) -> T:
+                                 attempts: int) -> T:
         assert self._ollama is not None
         text_parts: list[str] = []
         images: list[bytes] = []
@@ -172,24 +159,36 @@ class LLMGateway:
                 raise LLMUnavailable("no vision model configured for images")
             model_id = self.settings.ollama_vision_model
         json_schema = inline_refs(schema.model_json_schema())
+
+        async def call() -> tuple[str, str, int]:
+            raw, tokens = await self._ollama.chat(model=model_id, system=prompt.text, user="\n\n".join(text_parts),
+                                                  images=images, schema=json_schema,
+                                                  num_ctx=self.settings.ollama_num_ctx,
+                                                  num_predict=self.settings.ollama_num_predict)
+            return raw, f"ollama:{model_id}", tokens
+
+        return await self._validated(prompt, schema, meter, attempts, call, backoff=0.5, cap=4.0)
+
+    @staticmethod
+    async def _validated(prompt: Prompt, schema: type[T], meter: UsageMeter, attempts: int,
+                         call: Callable[[], Awaitable[tuple[str, str, int]]], backoff: float, cap: float) -> T:
+        """Call the model until its reply fits `schema`. `call` returns (text, model label, tokens used)."""
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             started = time.monotonic()
             try:
-                raw, tokens = await self._ollama.chat(model=model_id, system=prompt.text, user="\n\n".join(text_parts),
-                                                      images=images, schema=json_schema,
-                                                      num_ctx=self.settings.ollama_num_ctx,
-                                                      num_predict=self.settings.ollama_num_predict)
-                meter.charge(prompt, f"ollama:{model_id}", tokens, int((time.monotonic() - started) * 1000))
-                return schema.model_validate_json(raw)
+                text, model_label, tokens = await call()
+                meter.charge(prompt, model_label, tokens, int((time.monotonic() - started) * 1000))
+                return schema.model_validate_json(text)
             except ValidationError as exc:
                 last_error = exc
                 log.warning("llm_schema_invalid", extra={"prompt": prompt.id, "attempt": attempt})
-            except Exception as exc:  # noqa: BLE001 - connection refused, timeouts, model not pulled
+            except Exception as exc:  # noqa: BLE001 - SDKs and transports raise many types; all mean "try again"
                 last_error = exc
                 log.warning("llm_call_failed", extra={"prompt": prompt.id, "attempt": attempt,
                                                       "error_type": type(exc).__name__})
-            await asyncio.sleep(min(4.0, 0.5 * 2 ** attempt + random.random()))
+            if attempt < attempts:
+                await asyncio.sleep(min(cap, backoff * 2 ** attempt + random.random()))
         raise LLMUnavailable(f"{prompt.id} failed after {attempts} attempts") from last_error
 
 

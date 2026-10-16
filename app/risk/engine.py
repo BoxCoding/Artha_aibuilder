@@ -217,7 +217,7 @@ def challenge_score(features: dict[str, float], result: ScoreResult) -> tuple[di
     direction = "higher" if delta > 0 else "lower"
     return summary, Signal(
         signal_id="sig-rk-model-disagree", code="RK-MODEL-DISAGREE", category="RISK", severity="MEDIUM",
-        confidence=0.7, detector="RULE", corroborated=True, evidence_ids=["ev-computed-inflow"],
+        confidence=0.7, evidence_ids=["ev-computed-inflow"],
         title="The two risk models disagree",
         explanation=(f"The learned challenger model puts this application in band {ml_band} ({ml_pd:.1%} default "
                      f"risk), {direction} than the scorecard's band {result.band} ({result.pd:.1%}). Cases where "

@@ -36,8 +36,3 @@ def detect(text: str) -> list[str]:
     """Return names of matched injection patterns (empty list when clean)."""
     norm = normalise(text)
     return [name for name, rx in _PATTERNS if rx.search(norm)]
-
-
-def redact_if_suspicious(text: str) -> tuple[str, list[str]]:
-    hits = detect(text)
-    return (REDACTED, hits) if hits else (text, hits)

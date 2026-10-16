@@ -13,7 +13,7 @@
    intervals, glances, breathing, settling). Landmarks for each portrait are measured once, below. */
 
 // Landmarks in the source photos' pixel coordinates (941 x 1672). "left" is the left of the image.
-export const FACES = {
+const FACES = {
   female: {
     eyeL: { outer: [327, 448], inner: [411, 440], top: [370, 424], bottom: [370, 457], iris: [370, 441], r: 11 },
     eyeR: { inner: [492, 418], outer: [575, 402], top: [535, 392], bottom: [533, 423], iris: [537, 405], r: 11 },
@@ -264,7 +264,6 @@ function createRig(reduced) {
       if (Math.random() < (strong ? 0.3 : 0.08)) r.impulses.push({ key: "brow", amt: 0.5 + Math.random() * 0.5 });
     },
     sentenceEnd() { if (Math.random() < 0.6) scheduleBlink(performance.now(), true); },
-    nod() { r.impulses.push({ key: "nod", amt: 1.2 }); },
     step(now, dt) {
       r.t += dt;
       const mood = MOODS[r.state === "listening" ? "listening" : r.state === "thinking" ? "thinking" : r.mood];
@@ -479,7 +478,6 @@ export function createFace() {
     setPortrait,
     setFraming(anchor) { f.anchor = anchor; },
     onReady(fn) { f.onReady = fn; },
-    get ready() { return f.ready; },
     start() { if (f.running) return; f.running = true; f.last = 0; f.raf = requestAnimationFrame(loop); },
     stop() { f.running = false; cancelAnimationFrame(f.raf); },
   };

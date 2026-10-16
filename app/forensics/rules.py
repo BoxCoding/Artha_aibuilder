@@ -83,7 +83,7 @@ def rule_balance_breaks(case: Case) -> list[Signal]:
         first_row, _, first_diff = found[0]
         signals.append(Signal(
             signal_id=_sid(case, "FR-BAL-001"), code="FR-BAL-001", category="FRAUD", severity=severity,
-            confidence=0.97 if text_layer else 0.6, detector="RULE", corroborated=text_layer,
+            confidence=0.97 if text_layer else 0.6, corroborated=text_layer,
             evidence_ids=list(dict.fromkeys(evidence_ids)),
             title="Running balance does not add up",
             explanation=(
@@ -126,7 +126,7 @@ def rule_font_inconsistency(case: Case) -> list[Signal]:
     large = sum(1 for t in outliers if t.credit >= Decimal("50000"))
     return [Signal(
         signal_id=_sid(case, "FR-FONT-001"), code="FR-FONT-001", category="FRAUD",
-        severity="CRITICAL" if large >= 2 else "HIGH", confidence=0.9, detector="RULE", corroborated=True,
+        severity="CRITICAL" if large >= 2 else "HIGH", confidence=0.9,
         evidence_ids=evidence_ids, title="Amounts printed in a different font",
         explanation=(f"{len(outliers)} amount cell(s) use a font or size that differs from every other amount in the "
                      f"column; {large} of them are deposits of 50,000 or more. Edited numbers often show this pattern."),
@@ -159,7 +159,7 @@ def rule_editing_traces(case: Case) -> list[Signal]:
         severity = "HIGH" if editor and (doc.incremental_updates or later_edit) else "MEDIUM"
         signals.append(Signal(
             signal_id=_sid(case, "FR-META-001", n), code="FR-META-001", category="FRAUD", severity=severity,
-            confidence=0.8 if severity == "HIGH" else 0.55, detector="RULE", corroborated=True,
+            confidence=0.8 if severity == "HIGH" else 0.55,
             evidence_ids=[ev_id], title="File shows signs of editing after issue",
             explanation="The " + "; the ".join(reasons) + ". Editing traces alone can be innocent, so this needs corroboration.",
         ))
@@ -172,7 +172,7 @@ def rule_injection(case: Case) -> list[Signal]:
         return []
     return [Signal(
         signal_id=_sid(case, "FR-INJ-001"), code="FR-INJ-001", category="FRAUD", severity="HIGH", confidence=0.95,
-        detector="RULE", corroborated=True, evidence_ids=[t.evidence_id for t in hits[:5]],
+        evidence_ids=[t.evidence_id for t in hits[:5]],
         title="Hidden instructions aimed at the AI",
         explanation=(f"{len(hits)} transaction description(s) contain text addressed to an automated reviewer. "
                      "The text was removed before any model read the document and had no effect on the assessment."),
@@ -186,7 +186,7 @@ def rule_duplicate_references(case: Case) -> list[Signal]:
         return []
     return [Signal(
         signal_id=_sid(case, "FR-TXN-001"), code="FR-TXN-001", category="FRAUD", severity="MEDIUM", confidence=0.7,
-        detector="RULE", corroborated=True, evidence_ids=[t.evidence_id for t in dupes[:6]],
+        evidence_ids=[t.evidence_id for t in dupes[:6]],
         title="Repeated transaction reference numbers",
         explanation=f"{len(dupes)} rows share a reference number with another row. Bank references are normally unique.",
     )]
@@ -205,7 +205,7 @@ def rule_date_sequence(case: Case) -> list[Signal]:
         return []
     return [Signal(
         signal_id=_sid(case, "FR-TXN-004"), code="FR-TXN-004", category="FRAUD", severity="HIGH", confidence=0.85,
-        detector="RULE", corroborated=True, evidence_ids=list(dict.fromkeys(t.evidence_id for t in bad[:6])),
+        evidence_ids=list(dict.fromkeys(t.evidence_id for t in bad[:6])),
         title="Dates out of order or outside the statement period",
         explanation=f"{len(bad)} row(s) are dated out of sequence or outside the period printed on the statement.",
     )]
@@ -222,7 +222,7 @@ def rule_window_dressing(case: Case) -> list[Signal]:
     total = sum((t.credit for t in recent), Decimal("0"))
     return [Signal(
         signal_id=_sid(case, "FR-TXN-002"), code="FR-TXN-002", category="RISK", severity="MEDIUM", confidence=0.65,
-        detector="RULE", corroborated=True, evidence_ids=[t.evidence_id for t in recent],
+        evidence_ids=[t.evidence_id for t in recent],
         title="Large round cash deposits just before applying",
         explanation=(f"{len(recent)} round-figure cash deposit(s) totalling {total:,.0f} in the final 15 days of the "
                      "statement can temporarily lift the average balance."),
@@ -272,7 +272,7 @@ def rule_statistical_outliers(case: Case) -> list[Signal]:
         return []  # immaterial to the income picture, so not worth an underwriter's time
     return [Signal(
         signal_id=_sid(case, "FR-STAT-001"), code="FR-STAT-001", category="FRAUD", severity="MEDIUM",
-        confidence=0.6, detector="RULE", corroborated=True,
+        confidence=0.6,
         evidence_ids=[t.evidence_id for t in flagged[:8]],
         title="Deposits that do not fit this account's pattern",
         explanation=(f"{len(flagged)} deposit(s), {share:.0%} of total business inflow, are far larger than every "
@@ -297,7 +297,7 @@ def rule_circular_transfers(case: Case) -> list[Signal]:
         return []
     return [Signal(
         signal_id=_sid(case, "FR-TXN-003"), code="FR-TXN-003", category="FRAUD", severity="MEDIUM", confidence=0.6,
-        detector="RULE", corroborated=True, evidence_ids=list(dict.fromkeys(pairs))[:8],
+        evidence_ids=list(dict.fromkeys(pairs))[:8],
         title="Money sent back to the same party within days",
         explanation="Similar amounts were received from and paid back to the same counterparty within three days.",
     )]
@@ -330,7 +330,7 @@ def rule_identity_consistency(case: Case) -> list[Signal]:
                                             description=f"Account holder printed on the statement: {holder[:60]}")
         signals.append(Signal(
             signal_id=_sid(case, "ID-NAME-001", n), code="ID-NAME-001", category="FRAUD", severity="MEDIUM",
-            confidence=0.6, detector="RULE", corroborated=True, evidence_ids=[ev_id],
+            confidence=0.6, evidence_ids=[ev_id],
             title="Statement is in a different name",
             explanation=(f"The account holder on the statement ({holder[:60]}) does not match the applicant or the "
                          "business named in the application. Confirm the account belongs to the applicant."),

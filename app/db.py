@@ -12,6 +12,7 @@ for tests and for `python -m app.cli init-db` on a throwaway database.
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from sqlalchemy import (JSON, BigInteger, Boolean, Column, DateTime, Engine, Index, Integer, LargeBinary, MetaData,
@@ -138,6 +139,13 @@ rate_limits = Table(
     Column("window_start", BigInteger, primary_key=True),
     Column("hits", Integer, nullable=False),
 )
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; everything stored here is UTC."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def make_engine(url: str, settings: Settings | None = None) -> Engine:

@@ -26,7 +26,7 @@ from app.risk.engine import annuity_principal, apply_policy, improvement_plan, l
 from app.security.injection import detect
 from app.security.masking import mask_text
 from app.synthetic.generator import (PERSONAS, add_injection, persona_statement, random_population, render_pdf,
-                                     statement_for, tamper_inflate_credits)
+                                     tamper_inflate_credits)
 
 
 def build_case(statement, business="Test Co", amount=300000, tenure=24) -> tuple[Case, bytes]:

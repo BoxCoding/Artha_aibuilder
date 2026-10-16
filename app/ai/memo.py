@@ -16,7 +16,6 @@ from app.ai.bundle import build_bundle
 from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
 from app.ai.schemas import CriticDraft, MemoDraft
 from app.domain.models import Case, Claim, CreditMemo, CriticIssue, MemoSection, Outcome
-from app.risk.engine import load_policy
 
 log = logging.getLogger("artha.memo")
 
@@ -346,7 +345,3 @@ async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, m
                                        "was composed deterministically from the same evidence.")
         return groundedness_gate(fallback)
     return gated
-
-
-def policy_clause_catalogue(jurisdiction: str) -> dict[str, str]:
-    return dict(load_policy(jurisdiction)["clauses"])

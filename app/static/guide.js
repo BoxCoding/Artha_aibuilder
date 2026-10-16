@@ -1,28 +1,24 @@
-/* Video guide: Saarthi, a video-call assistant that walks a customer through their application.
+/* The video guide: a video call with Sahayika or Saarthi, who walks a customer through their application.
 
-   - Voice: the browser's speech synthesis, with the most natural installed voice chosen per language
-     (Premium / Enhanced / Natural / Google voices first, novelty voices never), spoken sentence by
-     sentence so long replies are not cut off, with rupee amounts and acronyms rewritten for speech.
-   - Face: one of two photo presenters, Sahayika and Sahayak, brought to life in the browser by
-     face.js: the mouth opens and closes with the words, the eyes blink and glance, the head nods and
-     sways, and the expression follows the conversation (warm, happy, concerned, listening, thinking).
-     The guide shows the presenter of the other gender from the signed-in person's self-declared
-     profile (female if not stated), and the person can switch at any time. The voice is matched to
-     the presenter. Without WebGL the still photo is shown with a speaking ring.
-   - Scope: it talks only about the person's own applications. On a new application it walks them
-     through the form one field at a time and highlights the field to fill next.
-   - Conversation: hands-free turn-taking with speech recognition where the browser has it. Tap the
-     presenter to interrupt. Camera and microphone are previews only: no frame or sound leaves the
-     device, only the recognised text of a question is sent.
-   - Every word it says comes from POST /api/guide. Its buttons only take the customer where they need
-     to go; it never presses submit or accept on their behalf. */
+   - Voice: the best installed speech-synthesis voice for the language and the presenter, read sentence
+     by sentence, with rupee amounts and acronyms rewritten for speech.
+   - Face: a photo animated by face.js (mouth, blinks, glances, nods, expressions); without WebGL the
+     still photo with a speaking ring. The presenter is the other gender from the person's optional,
+     self-declared profile (female if not stated), and can be switched in the call.
+   - Conversation: hands-free with speech recognition where the browser has it. Camera and microphone
+     stay on the device; only the recognised text of a question is sent.
+   - Replies come from POST /api/guide. Buttons only take the customer where they need to go; the guide
+     never submits or accepts anything for them. */
 
+const version = new URL(import.meta.url).search;
+const { el, button, MIC_BLOCKED, Recognition, SPEECH_LANG, questionPicker, recogniser } = await import(`./ui.js${version}`);
 let createFace = null;
-try { ({ createFace } = await import(`./face.js${new URL(import.meta.url).search}`)); } catch { /* still photo */ }
+try { ({ createFace } = await import(`./face.js${version}`)); } catch { /* still photo */ }
 
-const SPEECH_LANG = { en: "en-IN", hi: "hi-IN", id: "id-ID" };
 const VOICE_FALLBACKS = { en: ["en-IN", "en-GB", "en-AU", "en-US"], hi: ["hi-IN"], id: ["id-ID"] };
 // macOS ships these as joke or effect voices; they must never be picked automatically.
+const HI_FEMININE = [["रहा हूँ", "रही हूँ"], ["सकता हूँ", "सकती हूँ"], ["देता हूँ", "देती हूँ"], ["पूछूँगा", "पूछूँगी"],
+  ["करूँगा", "करूँगी"], ["बताऊँगा", "बताऊँगी"], ["पाया।", "पाई।"]];
 const NOVELTY = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|eddy|flo|reed|sandy)\b/i;
 // The two presenters: portrait photos served from /static/guide/.
 const PRESENTERS = {
@@ -33,7 +29,7 @@ const PRESENTERS = {
 const FEMALE_VOICES = /\b(female|woman|samantha|karen|moira|tessa|victoria|veena|lekha|kalpana|swara|heera|neerja|aditi|raveena|kajal|ananya|sangeeta|priya|isha|zira|susan|hazel|serena|fiona|damayanti|gadis|kiara|google हिन्दी|google bahasa)\b/i;
 const MALE_VOICES = /\b(male|man|rishi|ravi|hemant|madhur|prabhat|aarav|kunal|daniel|alex|oliver|arthur|aaron|gordon|david|mark|george|guy|ardi|thomas|tom|lee)\b/i;
 
-// The form interview: Saarthi asks for each empty field in turn.
+// The form interview: the presenter asks for each empty field in turn.
 const FORM_ORDER = ["full_name", "mobile", "pan", "business_name", "industry", "business_start_year", "address_line",
   "city", "state", "pincode", "requested_amount", "tenure_months"];
 const FORM_Q = {
@@ -136,12 +132,6 @@ const UI = {
 /* ------------------------------------------------------------------ small DOM helpers */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 function svg(tag, attrs = {}, parent = null) {
   const node = document.createElementNS(SVG_NS, tag);
   Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
@@ -158,14 +148,13 @@ const ICONS = {
   minimise: "M5 12h14",
 };
 function iconButton(name, label, extra = "") {
-  const button = el("button", `guide-ctl ${extra}`.trim());
-  button.type = "button";
-  button.setAttribute("aria-label", label);
-  button.title = label;
+  const node = button(undefined, `guide-ctl ${extra}`.trim());
+  node.setAttribute("aria-label", label);
+  node.title = label;
   const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "guide-icon" });
   svg("path", { d: ICONS[name] }, icon);
-  button.appendChild(icon);
-  return button;
+  node.appendChild(icon);
+  return node;
 }
 function store(key, value) {
   try {
@@ -176,17 +165,6 @@ function store(key, value) {
 }
 
 /* ------------------------------------------------------------------ the presenter */
-
-// Mouth shapes (visemes). The lips are one closed path around (120,151).
-const MOUTH = {
-  rest:   "M105 150 Q120 158 135 150 Q120 154 105 150 Z",
-  closed: "M106 151 Q120 153 134 151 Q120 154 106 151 Z",
-  small:  "M107 149 Q120 159 133 149 Q120 151 107 149 Z",
-  open:   "M108 146 Q120 169 132 146 Q120 149 108 146 Z",
-  round:  "M113 145 Q120 165 127 145 Q120 141 113 145 Z",
-  wide:   "M103 148 Q120 161 137 148 Q120 151 103 148 Z",
-  fv:     "M106 150 Q120 156 134 150 Q120 151 106 150 Z",
-};
 
 function visemeOf(ch) {
   const c = ch.toLowerCase();
@@ -253,8 +231,7 @@ function sentences(text) {
 
 /* ------------------------------------------------------------------ the guide */
 
-export function createGuide({ api, context, actions }) {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+export function createGuide({ api, post, context, actions }) {
   const synth = window.speechSynthesis || null;
   const g = {
     user: null, open: false, minimised: false, expanded: false, lang: "en", lastKey: null, busy: false,
@@ -262,14 +239,13 @@ export function createGuide({ api, context, actions }) {
     convo: false, rec: null, camStream: null, micStream: null, audioCtx: null, startedAt: 0, speakToken: 0,
     presenter: "female",
   };
-  // Hindi first person is gendered: the female presenter says "सुन रही हूँ", the male "सुन रहा हूँ".
+  // Hindi first person is gendered; the lines here are written in the masculine.
   const inVoice = (text) => (g.lang === "hi" && g.presenter === "female"
-    ? text.replace(/रहा हूँ/g, "रही हूँ").replace(/करूँगा/g, "करूँगी") : text);
+    ? HI_FEMININE.reduce((out, [male, female]) => out.replaceAll(male, female), text) : text);
   const presenterName = (lang = "en") => PRESENTERS[g.presenter][lang] || PRESENTERS[g.presenter].name;
 
   // ---- layout: a floating video-call window
-  const launcher = el("button", "guide-launcher hidden");
-  launcher.type = "button";
+  const launcher = button(undefined, "guide-launcher hidden");
   const launcherPresenter = buildPresenter();
   const launcherFace = el("span", "guide-mini");
   launcherFace.appendChild(launcherPresenter.root);
@@ -295,16 +271,13 @@ export function createGuide({ api, context, actions }) {
   langPick.setAttribute("aria-label", "Language");
   const expandBtn = iconButton("expand", "Larger", "small");
   const minBtn = iconButton("minimise", "Minimise", "small");
-  const switchBtn = el("button", "guide-ctl small guide-switch");
-  switchBtn.type = "button";
-  switchBtn.textContent = "⇄";
+  const switchBtn = button("⇄", "guide-ctl small guide-switch");
   top.append(who, live, langPick, switchBtn, expandBtn, minBtn);
 
   const stage = el("div", "guide-stage");
   const presenter = buildPresenter("female", { live: true });
   const face = presenter.face; // null without WebGL: the still photo and its speaking ring remain
-  const presenterWrap = el("button", "guide-presenter");
-  presenterWrap.type = "button";
+  const presenterWrap = button(undefined, "guide-presenter");
   presenterWrap.appendChild(presenter.root);
   const stepChip = el("span", "guide-chip-step");
   const listenPill = el("span", "guide-listen hidden");
@@ -323,8 +296,7 @@ export function createGuide({ api, context, actions }) {
   const photo = el("video", "guide-photo hidden");
   photo.autoplay = true; photo.playsInline = true; photo.muted = true; // sound comes from its own audio element
   const aiBadge = el("span", "guide-ai-badge");
-  const soundBtn = el("button", "guide-sound hidden");
-  soundBtn.type = "button";
+  const soundBtn = button(undefined, "guide-sound hidden");
   stage.append(presenterWrap, photo, stepChip, listenPill, aiBadge, soundBtn, selfTile, captionBar);
 
   const progress = el("div", "guide-progress");
@@ -344,14 +316,9 @@ export function createGuide({ api, context, actions }) {
   const body = el("div", "guide-body");
   const actionRow = el("div", "guide-actions");
   const transcript = el("div", "guide-transcript");
-  const topics = el("div", "guide-topics");
-  topics.setAttribute("role", "tablist");
-  const chips = el("div", "chips guide-chips");
-  const more = el("details", "guide-more");
-  const moreSummary = el("summary", "small");
-  const moreHint = el("p", "small muted");
-  const moreList = el("div", "guide-more-list");
-  more.append(moreSummary, moreHint, moreList);
+  // When new topics appear (the statement was read, a decision arrived), lead with them.
+  const questions = questionPicker({ onAsk: (q) => ask(q), prefer: ["decision", "income", "next"],
+                                     chipsClass: "chips guide-chips" });
   const askRow = el("div", "guide-ask");
   const input = el("input");
   input.maxLength = 500;
@@ -362,7 +329,7 @@ export function createGuide({ api, context, actions }) {
   const voicePick = el("select", "guide-select");
   voiceRow.append(voiceLabel, voicePick);
   const note = el("p", "small muted guide-note");
-  body.append(actionRow, transcript, topics, chips, more, askRow, voiceRow, note);
+  body.append(actionRow, transcript, questions.root, askRow, voiceRow, note);
 
   call.append(top, stage, progress, controls, body);
   document.body.append(launcher, call);
@@ -382,28 +349,21 @@ export function createGuide({ api, context, actions }) {
   }
   setMood("idle");
 
-  // Blinks and glances at human-ish, irregular intervals.
-  let lifeTimers = [];
+  // The live face moves by itself. A still photo only drifts a little, like a person settling in a chair.
+  let driftTimer = 0;
   function startLife() {
     stopLife();
-    if (face) { face.start(); return; } // the live face blinks, glances and settles by itself
-    const blink = () => {
-      stage.classList.add("blink");
-      setTimeout(() => stage.classList.remove("blink"), 140);
-      lifeTimers[0] = setTimeout(blink, 2200 + Math.random() * 3800);
+    if (face) { face.start(); return; }
+    const drift = () => {
+      const x = stage.dataset.mood === "listening" ? 0 : (Math.random() - 0.5) * 2;
+      const y = stage.dataset.mood === "thinking" ? -0.9 : (Math.random() - 0.5) * 0.75;
+      presenter.root.style.setProperty("--drift-x", `${x.toFixed(2)}%`);
+      presenter.root.style.setProperty("--drift-y", `${y.toFixed(2)}%`);
+      driftTimer = setTimeout(drift, 1200 + Math.random() * 2600);
     };
-    const glance = () => {
-      const listening = stage.dataset.mood === "listening";
-      const x = listening ? 0 : (Math.random() - 0.5) * 5;
-      const y = stage.dataset.mood === "thinking" ? -3 : (Math.random() - 0.5) * 2.5;
-      // A small drift of the framing reads as a person settling in their chair.
-      presenter.root.style.setProperty("--drift-x", `${(x * 0.4).toFixed(2)}%`);
-      presenter.root.style.setProperty("--drift-y", `${(y * 0.3).toFixed(2)}%`);
-      lifeTimers[1] = setTimeout(glance, 1200 + Math.random() * 2600);
-    };
-    lifeTimers = [setTimeout(blink, 1500), setTimeout(glance, 900)];
+    drift();
   }
-  function stopLife() { lifeTimers.forEach(clearTimeout); lifeTimers = []; face?.stop(); }
+  function stopLife() { clearTimeout(driftTimer); face?.stop(); }
 
   // Lip sync: a timeline of mouth shapes estimated from the text, re-anchored to every word boundary
   // the voice reports, so it stays in step whether or not the voice sends boundary events.
@@ -539,7 +499,7 @@ export function createGuide({ api, context, actions }) {
       captionNow.textContent = UI[g.lang].connecting;
       try {
         const [LK, session] = await Promise.all([loadLiveKit(),
-          api("/api/guide/avatar", { method: "POST", body: JSON.stringify({ language: g.lang, presenter: g.presenter }) })]);
+          post("/api/guide/avatar", { language: g.lang, presenter: g.presenter })]);
         const room = new LK.Room({ adaptiveStream: true });
         room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSoundPrompt);
         room.on(LK.RoomEvent.TrackSubscribed, (track) => {
@@ -566,7 +526,6 @@ export function createGuide({ api, context, actions }) {
         await room.connect(session.livekit_url, session.livekit_token);
         avatar.room = room;
         avatar.session = session;
-        window.__ledgerlensAvatarRoom = room; // inspection hook for debugging audio; holds no secrets
         unlockAvatarAudio();
         showSoundPrompt();
         aiBadge.textContent = `${UI[g.lang].aiBadge}${session.sandbox ? " · sandbox" : ""}`;
@@ -590,13 +549,11 @@ export function createGuide({ api, context, actions }) {
     photo.classList.add("hidden");
     stage.classList.remove("photoreal");
     soundBtn.classList.add("hidden");
-    window.__ledgerlensAvatarRoom = null;
     aiBadge.textContent = UI[g.lang].aiBadge;
     try { room?.disconnect(); } catch { /* already closed */ }
     stage.querySelectorAll(".guide-room-audio").forEach((player) => player.remove());
     if (session) {
-      api("/api/guide/avatar/stop", { method: "POST",
-        body: JSON.stringify({ session_id: session.session_id, session_token: session.session_token }) }).catch(() => {});
+      post("/api/guide/avatar/stop", { session_id: session.session_id, session_token: session.session_token }).catch(() => {});
     }
     if (byProvider && g.open) note.textContent = inVoice(UI[g.lang].avatarEnded);
   }
@@ -617,6 +574,7 @@ export function createGuide({ api, context, actions }) {
 
   // Speak a reply sentence by sentence. Resolves when it has finished (or was interrupted).
   function say(text) {
+    text = inVoice(text);
     stopSpeaking();
     const token = g.speakToken;
     addTranscript("bot", text);
@@ -697,36 +655,31 @@ export function createGuide({ api, context, actions }) {
     if (on) setMood("listening"); else if (stage.dataset.mood === "listening") setMood("idle");
   }
 
+  // One utterance from the microphone: the words, "" if nobody spoke, or null if there is no usable mic.
+  function hear() {
+    return new Promise((resolve) => {
+      let heard = "";
+      let blocked = false;
+      const rec = recogniser(g.lang, { onText: (text) => { heard = text; captionNow.textContent = `${UI[g.lang].you}: ${text}`; } });
+      rec.onerror = (event) => { blocked = MIC_BLOCKED.includes(event.error); };
+      rec.onend = () => { g.rec = null; setListening(false); resolve(blocked ? null : heard); };
+      try { rec.start(); g.rec = rec; setListening(true); } catch { resolve(""); }
+    });
+  }
+  function stopHearing() {
+    if (g.rec) { try { g.rec.abort(); } catch { /* already stopped */ } }
+    g.rec = null;
+  }
+
+  // Hands-free conversation: listen, ask, listen again. Silence keeps the line open a few times.
   let quietRetries = 0;
-  function listen() {
+  async function listen() {
     if (!Recognition || g.rec || !g.convo || g.busy) return;
-    const rec = new Recognition();
-    g.rec = rec;
-    rec.lang = SPEECH_LANG[g.lang];
-    rec.interimResults = true;
-    rec.continuous = false;
-    let heard = "";
-    let final = false;
-    rec.onresult = (event) => {
-      heard = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
-      captionNow.textContent = `${UI[g.lang].you}: ${heard}`;
-      final = event.results[event.results.length - 1].isFinal;
-    };
-    rec.onerror = (event) => {
-      if (event.error === "not-allowed" || event.error === "service-not-allowed" || event.error === "audio-capture") {
-        setConvo(false);
-        note.textContent = UI[g.lang].noMic;
-      }
-    };
-    rec.onend = () => {
-      g.rec = null;
-      setListening(false);
-      if (final && heard) { quietRetries = 0; ask(heard); return; }
-      // Nobody spoke: keep the line open a few times, then wait for the customer to tap the mic.
-      if (g.convo && quietRetries < 3) { quietRetries += 1; setTimeout(listen, 250); }
-      else if (g.convo) setConvo(false);
-    };
-    try { rec.start(); setListening(true); } catch { g.rec = null; }
+    const heard = await hear();
+    if (heard === null) { setConvo(false); note.textContent = UI[g.lang].noMic; return; }
+    if (heard) { quietRetries = 0; ask(heard); return; }
+    if (g.convo && quietRetries < 3) { quietRetries += 1; setTimeout(listen, 250); }
+    else if (g.convo) setConvo(false);
   }
 
   async function setConvo(on) {
@@ -741,7 +694,7 @@ export function createGuide({ api, context, actions }) {
       startMeter();
       listen();
     } else {
-      if (g.rec) { try { g.rec.abort(); } catch { /* already stopped */ } g.rec = null; }
+      stopHearing();
       setListening(false);
       stopMeter();
     }
@@ -818,12 +771,11 @@ export function createGuide({ api, context, actions }) {
     stepChip.textContent = `${UI[g.lang].step} ${j.step_number} ${UI[g.lang].of} ${j.total_steps}`;
     stepChip.classList.toggle("hidden", j.step === "list");
     actionRow.replaceChildren(...result.actions.map((a) => {
-      const button = el("button", a.id === "callback" ? "ghost" : "stamp", a.label);
-      button.addEventListener("click", async () => {
-        button.disabled = true;
-        try { await actions[a.id]?.(); } finally { button.disabled = false; }
+      const go = button(a.label, a.id === "callback" ? "ghost" : "stamp", async () => {
+        go.disabled = true;
+        try { await actions[a.id]?.(); } finally { go.disabled = false; }
       });
-      return button;
+      return go;
     }));
     renderFormButtons();
   }
@@ -831,7 +783,7 @@ export function createGuide({ api, context, actions }) {
   /* ---------------------------------------------------------------- form interview */
 
   const form = actions.form;
-  const flow = { active: false, queue: [], idx: 0, fails: 0, quiet: 0, rec: null, micBlocked: false };
+  const flow = { active: false, queue: [], idx: 0, fails: 0, micBlocked: false };
   // Commands are short ("skip", "go back"); a long answer that happens to contain "next" is still an answer.
   const said = (text, words) => text.split(/\s+/).length <= 4 && words.some((w) => text.includes(w));
 
@@ -845,10 +797,8 @@ export function createGuide({ api, context, actions }) {
 
   function formButtons() {
     if (!form?.open()) return [];
-    const button = el("button", flow.active ? "ghost" : "stamp", flow.active ? FORM_TEXT[g.lang].stop : FORM_TEXT[g.lang].fill);
-    button.type = "button";
-    button.addEventListener("click", () => (flow.active ? endForm(true) : startForm()));
-    return [button];
+    return [button(flow.active ? FORM_TEXT[g.lang].stop : FORM_TEXT[g.lang].fill, flow.active ? "ghost" : "stamp",
+                   () => (flow.active ? endForm(true) : startForm()))];
   }
   function renderFormButtons() {
     actionRow.querySelectorAll(".form-flow-btn").forEach((b) => b.remove());
@@ -858,7 +808,7 @@ export function createGuide({ api, context, actions }) {
   async function startForm() {
     if (!form?.open()) { await say(FORM_TEXT[g.lang].notHere); return; }
     setConvo(false); // the interview does its own listening
-    Object.assign(flow, { active: true, idx: 0, fails: 0, quiet: 0, queue: FORM_ORDER.filter((k) => form.isEmpty(k)) });
+    Object.assign(flow, { active: true, idx: 0, fails: 0, queue: FORM_ORDER.filter((k) => form.isEmpty(k)) });
     renderFormButtons();
     if (!flow.queue.length) { await say(FORM_TEXT[g.lang].allFilled); return endForm(); }
     askField(FORM_TEXT[g.lang].start);
@@ -875,44 +825,19 @@ export function createGuide({ api, context, actions }) {
     if (heard && flow.active) handleFormAnswer(heard);
   }
 
-  // One answer from the microphone, or null (no mic, silence, or an error): then a typed answer is awaited.
-  function listenOnce() {
-    return new Promise((resolve) => {
-      if (!Recognition || flow.micBlocked) { resolve(null); return; }
-      const rec = new Recognition();
-      flow.rec = rec;
-      rec.lang = SPEECH_LANG[g.lang];
-      rec.interimResults = true;
-      rec.continuous = false;
-      let heard = "";
-      rec.onresult = (event) => {
-        heard = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
-        captionNow.textContent = `${UI[g.lang].you}: ${heard}`;
-      };
-      rec.onerror = (event) => {
-        if (["not-allowed", "service-not-allowed", "audio-capture"].includes(event.error)) {
-          flow.micBlocked = true;
-          note.textContent = FORM_TEXT[g.lang].typeInstead;
-        }
-      };
-      rec.onend = () => {
-        flow.rec = null;
-        setListening(false);
-        if (!heard && flow.active && !flow.micBlocked && flow.quiet < 2) {
-          flow.quiet += 1; // nobody spoke: listen again a couple of times before waiting for typing
-          listenOnce().then(resolve);
-          return;
-        }
-        flow.quiet = 0;
-        resolve(heard || null);
-      };
-      try { rec.start(); setListening(true); } catch { flow.rec = null; resolve(null); }
-    });
+  // One answer for the form interview, or null (no mic, or silence): then a typed answer is awaited.
+  async function listenOnce() {
+    for (let tries = 0; tries < 3 && Recognition && !flow.micBlocked && flow.active; tries += 1) {
+      const heard = await hear();
+      if (heard === null) { flow.micBlocked = true; note.textContent = FORM_TEXT[g.lang].typeInstead; }
+      if (heard) return heard;
+    }
+    return null;
   }
 
   async function handleFormAnswer(text) {
     if (!flow.active) return;
-    if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+    stopHearing();
     addTranscript("me", text);
     input.value = "";
     const t = text.toLowerCase().trim();
@@ -928,7 +853,7 @@ export function createGuide({ api, context, actions }) {
     if (said(t, W.repeat)) return askField();
     let value = null;
     try {
-      const body = await api("/api/form/voice", { method: "POST", body: JSON.stringify({ transcript: text, field: key }) });
+      const body = await post("/api/form/voice", { transcript: text, field: key });
       value = body.fields?.[key] ?? null;
     } catch { value = null; }
     if (value !== null && form.set(key, value)) {
@@ -942,7 +867,7 @@ export function createGuide({ api, context, actions }) {
   }
 
   async function endForm(stopped = false) {
-    if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+    stopHearing();
     const wasActive = flow.active;
     flow.active = false;
     renderFormButtons();
@@ -968,8 +893,8 @@ export function createGuide({ api, context, actions }) {
     let reply = null;
     try {
       const { caseId, screen, field } = context();
-      reply = await api("/api/guide", { method: "POST", body: JSON.stringify({ message, case_id: caseId, language: g.lang,
-        screen, field: !caseId && screen !== "list" ? field : null, greet, presenter: g.presenter }) });
+      reply = await post("/api/guide", { message, case_id: caseId, language: g.lang, screen,
+                                         field: !caseId && screen !== "list" ? field : null, greet, presenter: g.presenter });
       renderJourney(reply);
       face?.rig.setMood(reply.mood || "warm");
       if (reply.field && !message) actions.highlight?.(reply.field);
@@ -981,60 +906,25 @@ export function createGuide({ api, context, actions }) {
     if (g.convo && g.open) listen();
   }
 
-  /* ---------------------------------------------------------------- suggested questions, by tag */
+  /* ---------------------------------------------------------------- suggested questions, by topic */
 
-  const questions = { groups: null, tag: null, key: null, tags: "" };
+  const loaded = { key: null, groups: null };
   async function loadQuestions() {
     const { caseId } = context();
     const key = `${g.lang}:${caseId || ""}:${g.lastKey || ""}`;
-    if (questions.key === key) return;
-    questions.key = key;
+    if (loaded.key === key) return;
+    loaded.key = key;
     try {
       const params = new URLSearchParams({ language: g.lang, ...(caseId ? { case_id: caseId } : {}) });
-      questions.groups = (await api(`/api/guide/questions?${params}`)).groups;
+      loaded.groups = (await api(`/api/guide/questions?${params}`)).groups;
     } catch {
-      questions.groups = null;
-    }
-    // When new tags appear (the statement was read, a decision arrived), lead with them: that is what the
-    // customer can now ask about. Otherwise keep the tag they picked.
-    const tags = (questions.groups || []).map((group) => group.tag);
-    if (tags.join() !== questions.tags) {
-      questions.tags = tags.join();
-      questions.tag = ["decision", "income", "next"].find((tag) => tags.includes(tag)) || tags[0] || null;
+      loaded.groups = null;
     }
     renderQuestions();
   }
-  function questionButton(text, className) {
-    const button = el("button", className, text);
-    button.type = "button";
-    button.addEventListener("click", () => { more.open = false; ask(text); });
-    return button;
-  }
   function renderQuestions() {
-    const groups = questions.groups;
-    if (!groups?.length) {
-      topics.replaceChildren();
-      more.classList.add("hidden");
-      chips.replaceChildren(...UI[g.lang].chips.map((q) => questionButton(q)));
-      return;
-    }
-    topics.replaceChildren(el("span", "small muted", UI[g.lang].topics), ...groups.map((group) => {
-      const pill = el("button", "guide-topic", group.label);
-      pill.type = "button";
-      pill.setAttribute("role", "tab");
-      pill.setAttribute("aria-selected", String(group.tag === questions.tag));
-      pill.addEventListener("click", () => { questions.tag = group.tag; renderQuestions(); });
-      return pill;
-    }));
-    const current = groups.find((group) => group.tag === questions.tag) || groups[0];
-    chips.replaceChildren(...current.questions.filter((q) => q.featured).map((q) => questionButton(q.text)));
-    more.classList.remove("hidden");
-    moreList.replaceChildren(...groups.map((group) => {
-      const section = el("div", "guide-more-group");
-      section.appendChild(el("b", "small", group.label));
-      group.questions.forEach((q) => section.appendChild(questionButton(q.text, "guide-more-q")));
-      return section;
-    }));
+    const t = UI[g.lang];
+    questions.render({ groups: loaded.groups, fallback: t.chips, labels: { topics: t.topics, more: t.more, hint: inVoice(t.moreHint) } });
   }
 
   // Speak again only when the customer's step (or, on a new application, the field to fill next)
@@ -1133,8 +1023,6 @@ export function createGuide({ api, context, actions }) {
     call.classList.toggle("expanded", g.expanded);
     face?.setFraming(g.expanded ? 0.48 : 0.5);
     langPick.value = g.lang;
-    moreSummary.textContent = t.more;
-    moreHint.textContent = t.moreHint;
     renderQuestions();
     fillVoicePicker();
   }
@@ -1160,7 +1048,7 @@ export function createGuide({ api, context, actions }) {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value.trim()) ask(input.value.trim()); });
   langPick.addEventListener("change", () => {
     g.lang = langPick.value;
-    if (g.rec) { try { g.rec.abort(); } catch { /* stopped */ } }
+    stopHearing();
     relabel();
     g.lastKey = null;
     // The avatar's voice language is fixed per session, so a new language needs a new session.
@@ -1202,7 +1090,7 @@ export function createGuide({ api, context, actions }) {
       // Leaving the form (or saving it) ends the interview quietly.
       if (flow.active && !form?.open()) {
         flow.active = false;
-        if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+        stopHearing();
       }
       refresh();
       renderFormButtons();

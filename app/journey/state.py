@@ -12,7 +12,6 @@ from app.domain.models import Case, CaseStatus, Outcome
 
 # Order matters: it drives the progress bar.
 STEPS = ("details", "statements", "submit", "processing", "review", "decided", "accept_terms", "done")
-DECIDED = {CaseStatus.APPROVED, CaseStatus.APPROVED_WITH_CONDITIONS, CaseStatus.DECLINED, CaseStatus.REFERRED}
 
 
 def journey(case: Case | None, max_documents: int = 3) -> dict[str, Any]:

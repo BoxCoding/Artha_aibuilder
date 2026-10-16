@@ -1,8 +1,10 @@
 /* LedgerLens front end. No inline scripts or styles: the page is served under a strict CSP.
    Text is built with textContent, never innerHTML, so document content can never become markup. */
 
-// Carry this file's ?v= asset version over, so a deploy never pairs new app.js with a cached guide.js.
-const { createGuide } = await import(`./guide.js${new URL(import.meta.url).search}`);
+// Carry this file's ?v= asset version over, so a deploy never pairs new app.js with cached modules.
+const version = new URL(import.meta.url).search;
+const { el, button, questionPicker, recogniser, Recognition } = await import(`./ui.js${version}`);
+const { createGuide } = await import(`./guide.js${version}`);
 
 const $ = (id) => document.getElementById(id);
 const state = { me: null, config: null, authMode: "signin", caseId: null, caseData: null, tab: "memo", docId: null, pages: new Map(), lang: "en" };
@@ -45,6 +47,7 @@ async function api(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
 
 const FIELD_LABELS = {
   full_name: "Full name", mobile: "Mobile number", email: "Email", pan: "PAN", date_of_birth: "Date of birth",
@@ -86,13 +89,6 @@ function show(name) {
   guide?.onView(name);
 }
 
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
 /* ------------------------------------------------------------------ sign-in */
 
@@ -115,7 +111,7 @@ function renderGate() {
   renderAuthForm();
   const demoBlock = $("demo-block");
   const roles = $("roles");
-  clear(roles);
+  roles.replaceChildren();
   const blurbs = {
     "meena@demo.artha": "Borrower — applies, and hears the outcome in her own language",
     "arun@demo.artha": "Underwriter — reviews the evidence and decides",
@@ -125,22 +121,18 @@ function renderGate() {
   const demo = state.config?.demo_mode ? state.config.demo_users : [];
   demoBlock.classList.toggle("hidden", demo.length === 0);
   demo.forEach(({ email, name, role }) => {
-    const button = el("button", "role-btn");
-    button.type = "button";
     const body = el("span");
-    body.appendChild(el("b", null, name));
-    body.appendChild(document.createElement("br"));
-    body.appendChild(el("span", "small muted", blurbs[email] || role));
-    button.append(el("span", "role-initial", name[0]), body, el("span", "role-go", "open"));
-    button.addEventListener("click", () => signIn({ email }));
-    roles.appendChild(button);
+    body.append(el("b", null, name), document.createElement("br"), el("span", "small muted", blurbs[email] || role));
+    const pick = button(undefined, "role-btn", () => enter("/api/session", { email }));
+    pick.append(el("span", "role-initial", name[0]), body, el("span", "role-go", "open"));
+    roles.appendChild(pick);
   });
   renderSpecimen();
 }
 
 function renderAuthForm() {
   const form = $("auth");
-  clear(form);
+  form.replaceChildren();
   if (state.config?.needs_setup && !state.config?.demo_mode) state.authMode = "setup";
   const registering = state.authMode === "register" || state.authMode === "setup";
   const setup = state.authMode === "setup";
@@ -177,14 +169,11 @@ function renderAuthForm() {
   submit.type = "submit";
   actions.appendChild(submit);
   if (state.config?.registration && !setup) {
-    const toggle = el("button", "switch", registering ? "I already have an account" : "New here? Create an account");
-    toggle.type = "button";
-    toggle.addEventListener("click", () => {
+    actions.appendChild(button(registering ? "I already have an account" : "New here? Create an account", "switch", () => {
       state.authMode = registering ? "signin" : "register";
       $("gate-note").textContent = "";
       renderAuthForm();
-    });
-    actions.appendChild(toggle);
+    }));
   }
   form.appendChild(actions);
   form.onsubmit = async (event) => {
@@ -192,8 +181,10 @@ function renderAuthForm() {
     submit.disabled = true;
     try {
       if (setup) await firstAdmin(name.value.trim(), email.value.trim(), password.value);
-      else if (registering) await register(name.value.trim(), email.value.trim(), password.value, genderPick?.value || null);
-      else await signIn({ email: email.value.trim(), password: password.value });
+      else if (registering) {
+        await enter("/api/register", { name: name.value.trim(), email: email.value.trim(), password: password.value,
+                                       gender: genderPick?.value || null });
+      } else await enter("/api/session", { email: email.value.trim(), password: password.value });
     } finally {
       submit.disabled = false;
       password.value = "";
@@ -203,7 +194,7 @@ function renderAuthForm() {
 
 async function firstAdmin(name, email, password) {
   try {
-    await api("/api/setup", { method: "POST", body: JSON.stringify({ name, email, password, role: "risk_admin" }) });
+    await post("/api/setup", { name, email, password, role: "risk_admin" });
     state.config.needs_setup = false;
     state.authMode = "signin";
     state.me = await api("/api/me");
@@ -222,20 +213,12 @@ function genderSelect(id, value) {
   return select;
 }
 
-async function register(name, email, password, gender) {
-  try {
-    await api("/api/register", { method: "POST", body: JSON.stringify({ name, email, password, gender }) });
-    state.me = await api("/api/me");
-    $("gate-note").textContent = "";
-    afterSignIn();
-  } catch (error) { $("gate-note").textContent = error.message; }
-}
 
 /* The hero is a fragment of the thing the product actually reads: a statement where one deposit
    was edited. The marked cell is the same treatment the underwriter sees over the real page. */
 function renderSpecimen() {
   const host = $("specimen");
-  clear(host);
+  host.replaceChildren();
   const head = el("div", "specimen-head");
   head.append(el("span", null, "Kaveri Commercial Bank · current account"), el("span", null, "page 4 of 6"));
   host.appendChild(head);
@@ -261,9 +244,10 @@ function renderSpecimen() {
   host.appendChild(el("p", "spec-caption", "Illustration: a fictional bank and account."));
 }
 
-async function signIn(credentials) {
+// Sign in or register: the server sets the session cookie, then the app opens.
+async function enter(path, body) {
   try {
-    await api("/api/session", { method: "POST", body: JSON.stringify(credentials) });
+    await post(path, body);
     state.me = await api("/api/me");
     $("gate-note").textContent = "";
     afterSignIn();
@@ -280,7 +264,7 @@ function afterSignIn() {
 
 function renderNav() {
   const nav = $("nav");
-  clear(nav);
+  nav.replaceChildren();
   if (!state.me) return;
   const links = {
     borrower: [["My applications", loadMine, "mine"], ["New application", renderApply, "apply"]],
@@ -290,10 +274,9 @@ function renderNav() {
   }[state.me.role] || [];
   links.push(["Account", renderAccount, "account"]);
   links.forEach(([label, handler, view]) => {
-    const button = el("button", "ghost", label);
-    button.dataset.view = view;
-    button.addEventListener("click", handler);
-    nav.appendChild(button);
+    const link = button(label, "ghost", handler);
+    link.dataset.view = view;
+    nav.appendChild(link);
   });
   const roleName = { borrower: "Customer", loan_officer: "Loan officer", underwriter: "Credit officer",
                      risk_admin: "Admin" }[state.me.role];
@@ -316,14 +299,14 @@ async function loadTeam() {
   show("team");
   const { users } = await api("/api/admin/users");
   const body = $("team-body");
-  clear(body);
+  body.replaceChildren();
   users.filter((u) => !u.demo || state.config?.demo_mode).forEach((u) => {
     const row = el("tr");
     const action = el("td");
     if (u.uid !== state.me.uid) {
       const toggle = el("button", "ghost small-btn", u.active ? "Disable" : "Enable");
       toggle.addEventListener("click", async () => {
-        try { await api(`/api/admin/users/${encodeURIComponent(u.uid)}/${u.active ? "disable" : "enable"}`, { method: "POST" }); loadTeam(); }
+        try { await post(`/api/admin/users/${encodeURIComponent(u.uid)}/${u.active ? "disable" : "enable"}`); loadTeam(); }
         catch (error) { $("team-note").textContent = error.message; }
       });
       action.appendChild(toggle);
@@ -341,7 +324,7 @@ async function loadTeam() {
       const payload = { name: $("t-name").value.trim(), email: $("t-email").value.trim(), role: $("t-role").value,
                         password: $("t-password").value, gender: $("t-gender").value || null };
       try {
-        await api("/api/admin/users", { method: "POST", body: JSON.stringify(payload) });
+        await post("/api/admin/users", payload);
         $("team-note").textContent = `Account created for ${payload.email}. Share the password with them securely; `
           + "they can change it under Account.";
         form.reset();
@@ -361,7 +344,7 @@ function renderAccount() {
   profile.onsubmit = async (event) => {
     event.preventDefault();
     try {
-      const result = await api("/api/me/profile", { method: "POST", body: JSON.stringify({ gender: pick.value || null }) });
+      const result = await post("/api/me/profile", { gender: pick.value || null });
       state.me = { ...state.me, gender: result.gender, guide_presenter: result.guide_presenter };
       guide?.setUser(state.me, state.lang);
       guide?.setPresenter(result.guide_presenter);
@@ -371,8 +354,8 @@ function renderAccount() {
   form.onsubmit = async (event) => {
     event.preventDefault();
     try {
-      await api("/api/me/password", { method: "POST", body: JSON.stringify({
-        current_password: $("p-current").value, new_password: $("p-new").value }) });
+      await post("/api/me/password", {
+        current_password: $("p-current").value, new_password: $("p-new").value });
       $("account-note").textContent = "Password changed. Other devices have been signed out.";
       form.reset();
     } catch (error) { $("account-note").textContent = error.message; }
@@ -420,10 +403,9 @@ function renderApply() {
   const officer = state.me.role === "loan_officer";
   $("apply-title").textContent = officer ? "New customer application" : "Apply for working capital";
   const form = $("apply-form");
-  clear(form);
+  form.replaceChildren();
   state.caseId = null;
-  const clearBtn = el("button", "ghost small-btn", "Clear form");
-  clearBtn.type = "button";
+  const clearBtn = button("Clear form", "ghost small-btn");
 
   if (state.config?.demo_mode) {
     const fill = el("button", "ghost small-btn", "Fill demo customer");
@@ -522,10 +504,10 @@ function renderApply() {
           if (value !== "") applicant[key] = key === "business_start_year" ? Number(value) : value;
         });
       state.lang = $("f-lang").value;
-      const created = await api("/api/cases", { method: "POST", body: JSON.stringify({
+      const created = await post("/api/cases", {
         applicant, requested_amount: Number($("f-amount").value), tenure_months: Number($("f-tenure").value),
         language: state.lang, consent: check.checked,
-      }) });
+      });
       state.caseId = created.case_id;
       sections.forEach((box) => { box.disabled = true; });
       check.disabled = true;
@@ -586,7 +568,6 @@ const VOICE_FIELDS = {
   address_line: "a-address_line", city: "a-city", state: "a-state", pincode: "a-pincode",
   requested_amount: "f-amount", tenure_months: "f-tenure", loan_purpose: "a-loan_purpose",
 };
-const SPEECH_LOCALE = { en: "en-IN", hi: "hi-IN", id: "id-ID" };
 
 // Put a heard value into the form and mark it for the customer to check. Returns the field's label, or null.
 function fillFormField(key, value) {
@@ -604,10 +585,30 @@ function fillFormField(key, value) {
 }
 const fieldLabel = (id) => document.querySelector(`label[for="${id}"]`)?.textContent || id;
 
+// Required applicant fields in form order, each with the check the server applies.
+const REQUIRED_FIELDS = [
+  ["full_name", (v) => v.length >= 2],
+  ["mobile", (v) => /^[6-9]\d{9}$/.test(v.replace(/\D/g, "").replace(/^91(?=\d{10}$)/, "")),
+   "Mobile number should be 10 digits starting with 6-9."],
+  ["pan", (v) => /^[A-Z]{5}\d{4}[A-Z]$/i.test(v), "PAN should look like ABCPE1234F."],
+  ["business_name", (v) => v.length >= 2],
+  ["address_line", (v) => v.length >= 3],
+  ["city", (v) => v.length >= 2],
+  ["pincode", (v) => /^[1-9]\d{5}$/.test(v), "PIN code should be 6 digits."],
+];
+// [field id, message] for every required field that is empty or fails its check.
+function applicantProblems() {
+  return REQUIRED_FIELDS.flatMap(([key, ok, invalid]) => {
+    const id = `a-${key}`;
+    const value = $(id)?.value.trim() || "";
+    if (!value) return [[id, `${fieldLabel(id)} is missing.`]];
+    return ok(value) ? [] : [[id, invalid || `${fieldLabel(id)} looks too short.`]];
+  });
+}
+
 // Speech goes to the server's extractor (code, not a language model); every value is marked for the customer
 // to check, and nothing is saved until they confirm the review.
 function voiceTools(form, voiceFilled) {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const box = el("div", "voice-bar");
   box.appendChild(el("p", "small", Recognition
     ? "Fill by voice: tap the mic and say your details in one go, for example \"My name is Priya Nair, mobile "
@@ -620,8 +621,7 @@ function voiceTools(form, voiceFilled) {
   const typed = el("textarea", "voice-typed");
   typed.rows = 2;
   typed.placeholder = "e.g. My name is Priya Nair, mobile 98450 12345, PAN ABCPN1234K, …";
-  const fromText = el("button", "ghost small-btn", "Fill from text");
-  fromText.type = "button";
+  const fromText = button("Fill from text", "ghost small-btn");
   const row = el("div", "row");
 
   const apply = (fields) => {
@@ -633,7 +633,7 @@ function voiceTools(form, voiceFilled) {
   const extract = async (transcript, field) => {
     if (!transcript.trim()) return;
     try {
-      const body = await api("/api/form/voice", { method: "POST", body: JSON.stringify({ transcript, field }) });
+      const body = await post("/api/form/voice", { transcript, field });
       apply(body.fields);
       if (field && !Object.keys(body.fields).length) status.textContent = `Couldn't read ${fieldLabel(VOICE_FIELDS[field])} from "${transcript}". Please type it.`;
     } catch (error) { status.textContent = error.message; }
@@ -641,21 +641,13 @@ function voiceTools(form, voiceFilled) {
   fromText.addEventListener("click", () => extract(typed.value, null));
 
   if (Recognition) {
-    const mic = el("button", "ghost small-btn", "🎤 Fill by voice");
-    mic.type = "button";
     let rec = null;
     let heard = "";
-    mic.addEventListener("click", () => {
+    const mic = button("🎤 Fill by voice", "ghost small-btn", () => {
       if (rec) { rec.stop(); return; }
-      rec = new Recognition();
-      rec.lang = SPEECH_LOCALE[$("f-lang")?.value] || "en-IN";
-      rec.continuous = true;
-      rec.interimResults = true;
       heard = "";
-      rec.onresult = (event) => {
-        heard = Array.from(event.results).map((r) => r[0].transcript).join(" ");
-        status.textContent = `Heard: ${heard}`;
-      };
+      rec = recogniser($("f-lang")?.value, { continuous: true,
+                                             onText: (text) => { heard = text; status.textContent = `Heard: ${text}`; } });
       rec.onerror = (event) => { status.textContent = `Microphone: ${event.error}. You can type below instead.`; };
       rec.onend = () => {
         rec = null;
@@ -674,19 +666,16 @@ function voiceTools(form, voiceFilled) {
     Object.entries(VOICE_FIELDS).forEach(([key, id]) => {
       const node = $(id);
       if (!node || node.tagName !== "INPUT") return;
-      const small = el("button", "ghost mic-btn", "🎤");
-      small.type = "button";
-      small.title = `Say your ${fieldLabel(id).toLowerCase()}`;
-      small.setAttribute("aria-label", small.title);
-      small.addEventListener("click", () => {
-        const one = new Recognition();
-        one.lang = SPEECH_LOCALE[$("f-lang")?.value] || "en-IN";
-        small.classList.add("live");
-        one.onresult = (event) => extract(event.results[0][0].transcript, key);
+      const small = button("🎤", "ghost mic-btn", () => {
+        let said = "";
+        const one = recogniser($("f-lang")?.value, { onText: (text) => { said = text; } });
         one.onerror = (event) => { status.textContent = `Microphone: ${event.error}.`; };
-        one.onend = () => small.classList.remove("live");
+        one.onend = () => { small.classList.remove("live"); extract(said, key); };
+        small.classList.add("live");
         one.start();
       });
+      small.title = `Say your ${fieldLabel(id).toLowerCase()}`;
+      small.setAttribute("aria-label", small.title);
       node.insertAdjacentElement("afterend", small);
       node.closest(".field")?.classList.add("has-mic");
     });
@@ -703,13 +692,7 @@ function showReview(form, voiceFilled, next, note, save) {
     if (!node) return "";
     return node.tagName === "SELECT" ? node.options[node.selectedIndex]?.text || "" : node.value.trim();
   };
-  const problems = [];
-  const required = ["a-full_name", "a-mobile", "a-pan", "a-business_name", "a-address_line", "a-city", "a-pincode"];
-  required.filter((id) => !value(id)).forEach((id) => problems.push([id, `${fieldLabel(id)} is missing.`]));
-  const mobile = value("a-mobile").replace(/[\s-]/g, "").replace(/^(\+91|0)/, "");
-  if (value("a-mobile") && !/^[6-9]\d{9}$/.test(mobile)) problems.push(["a-mobile", "Mobile number should be 10 digits starting with 6-9."]);
-  if (value("a-pan") && !/^[A-Z]{5}\d{4}[A-Z]$/i.test(value("a-pan"))) problems.push(["a-pan", "PAN should look like ABCPE1234F."]);
-  if (value("a-pincode") && !/^[1-9]\d{5}$/.test(value("a-pincode"))) problems.push(["a-pincode", "PIN code should be 6 digits."]);
+  const problems = applicantProblems();
   const amount = Number($("f-amount").value);
   if (!(amount >= 50000 && amount <= 1000000)) problems.push(["f-amount", "Amount should be between ₹50,000 and ₹10,00,000."]);
   if (!$("f-consent").checked) problems.push(["f-consent", "Please tick the consent box."]);
@@ -775,7 +758,7 @@ function renderStatements(form) {
     const add = el("button", "ghost", "Attach sample");
     add.addEventListener("click", async () => {
       try {
-        const res = await api(`/api/cases/${state.caseId}/sample`, { method: "POST", body: JSON.stringify({ persona: pick.value }) });
+        const res = await post(`/api/cases/${state.caseId}/sample`, { persona: pick.value });
         addUploadRow(list, { name: res.filename }, null, res, sync);
       } catch (error) { demo.appendChild(el("p", "small error-text", error.message)); }
     });
@@ -796,7 +779,7 @@ function renderStatements(form) {
   submit.addEventListener("click", async () => {
     submit.disabled = true;
     try {
-      await api(`/api/cases/${state.caseId}/submit`, { method: "POST" });
+      await post(`/api/cases/${state.caseId}/submit`);
       watchProgress();
     } catch (error) { note.textContent = error.message; submit.disabled = false; }
   });
@@ -828,7 +811,7 @@ function addUploadRow(list, meta, file, done, sync) {
     status.textContent = result.preview ? describePreview(result.preview) : "Sample statement attached";
     if (result.note) status.textContent += ` (${result.note})`;
     guide?.onView(currentView);
-    clear(actions);
+    actions.replaceChildren();
     const remove = el("button", "ghost small-btn", "Remove");
     remove.addEventListener("click", async () => {
       try { await api(`/api/cases/${state.caseId}/documents/${result.doc_id}`, { method: "DELETE" }); row.remove(); sync(); guide?.onView(currentView); }
@@ -849,7 +832,7 @@ function addUploadRow(list, meta, file, done, sync) {
       row.className = "upload failed";
       status.textContent = error.message;
       guide?.onUploadError(error.message);
-      clear(actions);
+      actions.replaceChildren();
       if (/password/i.test(error.message)) {
         const pw = control("input", `pw-${Math.random().toString(36).slice(2)}`, { type: "password",
           placeholder: "PDF password", autocomplete: "off" });
@@ -921,9 +904,9 @@ function watchProgress() {
   $("progress-title").textContent = staffView ? "Assessing the application" : "Reading your statements";
   $("progress-note").textContent = "The recommendation is usually ready within seconds; the written analysis "
     + "follows. You can watch each step as it finishes.";
-  clear($("progress-actions"));
+  $("progress-actions").replaceChildren();
   const ledger = $("ledger");
-  clear(ledger);
+  ledger.replaceChildren();
   const rows = new Map();
   STEP_ORDER.forEach((step) => {
     const row = el("div", "ledger-row pending");
@@ -942,7 +925,7 @@ function watchProgress() {
     row.children[2].textContent = event.duration_ms != null ? `${event.duration_ms} ms` : "";
     if (event.step === "risk_engine" && event.status === "completed") {
       const actions = $("progress-actions");
-      clear(actions);
+      actions.replaceChildren();
       actions.appendChild(staffView ? instantResult(event.detail)
         : el("div", "notice ok", "Your statements have been analysed. A loan officer will now review the result."));
     }
@@ -994,7 +977,7 @@ async function waitForDecision() {
   ledger.appendChild(row);
 
   const actions = $("progress-actions");
-  clear(actions);
+  actions.replaceChildren();
   const check = el("button", "ghost", "Check now");
   const mine = el("button", "ghost", "My applications");
   mine.addEventListener("click", loadMine);
@@ -1029,17 +1012,16 @@ async function waitForDecision() {
 function demoHint(text, label, action) {
   const box = el("div", "demo-hint");
   box.appendChild(el("p", "small", text));
-  const button = el("button", "stamp", label);
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    try { await action(); } catch (error) { box.appendChild(el("p", "small", error.message)); button.disabled = false; }
+  const go = button(label, "stamp", async () => {
+    go.disabled = true;
+    try { await action(); } catch (error) { box.appendChild(el("p", "small", error.message)); go.disabled = false; }
   });
-  box.appendChild(button);
+  box.appendChild(go);
   return box;
 }
 
 async function demoSwitch(email) {
-  await api("/api/session", { method: "POST", body: JSON.stringify({ email }) });
+  await post("/api/session", { email });
   state.me = await api("/api/me");
   renderNav();
   guide?.setUser(state.me, state.lang);
@@ -1059,14 +1041,14 @@ async function loadMine() {
   $("mine-new").textContent = officer ? "New customer application" : "New application";
   $("mine-new").onclick = renderApply;
   const head = $("mine-head");
-  clear(head);
+  head.replaceChildren();
   const cols = officer ? ["Customer business", "Requested", "Submitted", "Recommendation", "Checks", "Status"]
     : ["Business", "Requested", "Submitted", "Status"];
   const tr = el("tr");
   cols.forEach((c) => tr.appendChild(el("th", null, c)));
   head.appendChild(tr);
   const body = $("mine-body");
-  clear(body);
+  body.replaceChildren();
   if (cases.length === 0) {
     const empty = el("tr");
     const td = el("td", "muted", "No applications yet. Start one with the button above.");
@@ -1104,13 +1086,13 @@ async function openMine(c) {
   if (data.decided) renderOutcome(data);
   else if (data.status === "PROCESSING") watchProgress();
   else if (data.status === "DRAFT") renderApply();
-  else { clear($("ledger")); waitForDecision(); }
+  else { $("ledger").replaceChildren(); waitForDecision(); }
 }
 
 function renderOutcome(data) {
   show("outcome");
   const body = $("outcome-body");
-  clear(body);
+  body.replaceChildren();
   const explanation = data.explanation || {};
   const outcome = data.outcome || {};
   const kind = outcome.approved ? "approved" : explanation.integrity_review ? "review" : "declined";
@@ -1159,7 +1141,7 @@ function renderOutcome(data) {
       const accept = el("button", "stamp", "I have read and accept these terms");
       accept.addEventListener("click", async () => {
         accept.disabled = true;
-        try { await api(`/api/cases/${state.caseId}/kfs/accept`, { method: "POST" }); renderOutcome(await api(`/api/cases/${state.caseId}`)); }
+        try { await post(`/api/cases/${state.caseId}/kfs/accept`); renderOutcome(await api(`/api/cases/${state.caseId}`)); }
         catch (error) { box.appendChild(el("p", "small error-text", error.message)); accept.disabled = false; }
       });
       box.append(el("p", "small muted", "The money is sent only after you accept. You can still exit during the cooling-off period."), accept);
@@ -1171,13 +1153,13 @@ function renderOutcome(data) {
 
   const copy = COPY[explanation.language] || COPY.en;
   const chips = $("coach-chips");
-  clear(chips);
+  chips.replaceChildren();
   copy.ask.forEach((question) => {
     const chip = el("button", null, question);
     chip.addEventListener("click", () => sendCoach(question));
     chips.appendChild(chip);
   });
-  clear($("coach-thread"));
+  $("coach-thread").replaceChildren();
   $("coach-input").placeholder = copy.placeholder;
   $("coach-send").textContent = copy.send;
   $("coach-send").onclick = () => sendCoach($("coach-input").value.trim());
@@ -1205,7 +1187,7 @@ function statementPanel(language) {
     thread.appendChild(el("div", "bubble me", question));
     input.value = "";
     try {
-      const reply = await api(`/api/cases/${state.caseId}/ask`, { method: "POST", body: JSON.stringify({ question, language: lang }) });
+      const reply = await post(`/api/cases/${state.caseId}/ask`, { question, language: lang });
       const bubble = el("div", "bubble bot");
       bubble.appendChild(el("p", null, reply.answer));
       if (reply.rows?.length) {
@@ -1242,16 +1224,15 @@ async function sendCoach(message) {
   thread.appendChild(el("div", "bubble me", message));
   $("coach-input").value = "";
   try {
-    const reply = await api(`/api/cases/${state.caseId}/coach`, { method: "POST", body: JSON.stringify({ message }) });
+    const reply = await post(`/api/cases/${state.caseId}/coach`, { message });
     thread.appendChild(el("div", "bubble bot", reply.reply));
     if (reply.offer_callback) {
-      const button = el("button", "ghost", "Ask for a call back");
-      button.addEventListener("click", async () => {
-        await api(`/api/cases/${state.caseId}/callback`, { method: "POST", body: JSON.stringify({ note: message }) });
-        button.disabled = true;
-        button.textContent = "A loan officer will call you";
+      const callback = button("Ask for a call back", "ghost", async () => {
+        await post(`/api/cases/${state.caseId}/callback`, { note: message });
+        callback.disabled = true;
+        callback.textContent = "A loan officer will call you";
       });
-      thread.appendChild(button);
+      thread.appendChild(callback);
     }
     $("coach-note").textContent = `answered by ${reply.author}`;
   } catch (error) { thread.appendChild(el("div", "bubble bot", error.message)); }
@@ -1263,7 +1244,7 @@ async function sendCoach(message) {
 async function loadQueue() {
   show("queue");
   const body = $("queue-body");
-  clear(body);
+  body.replaceChildren();
   const data = await api("/api/queue");
   data.cases.forEach((item) => {
     const row = el("tr");
@@ -1301,7 +1282,7 @@ async function openCase(caseId) {
 function renderCaseHead() {
   const data = state.caseData;
   const head = $("case-head");
-  clear(head);
+  head.replaceChildren();
   $("case-title").textContent = data.business_name;
   const line = el("div", "spread");
   const left = el("div");
@@ -1399,7 +1380,7 @@ function renderCompliance(panel, data) {
         const btn = el("button", "ghost small-btn", "Clear as compliance");
         btn.addEventListener("click", async () => {
           try {
-            await api(`/api/cases/${state.caseId}/compliance/clear`, { method: "POST", body: JSON.stringify({ code: signal.code, note: note.value }) });
+            await post(`/api/cases/${state.caseId}/compliance/clear`, { code: signal.code, note: note.value });
             state.caseData = await api(`/api/cases/${state.caseId}`); renderPanel();
           } catch (error) { block.appendChild(el("p", "small error-text", error.message)); }
         });
@@ -1416,7 +1397,7 @@ function renderCompliance(panel, data) {
     if (state.me.role === "loan_officer" && !data.kfs_accepted_at) {
       const accept = el("button", "stamp", "Record customer's acceptance (in person)");
       accept.addEventListener("click", async () => {
-        try { await api(`/api/cases/${state.caseId}/kfs/accept`, { method: "POST" }); state.caseData = await api(`/api/cases/${state.caseId}`); renderPanel(); }
+        try { await post(`/api/cases/${state.caseId}/kfs/accept`); state.caseData = await api(`/api/cases/${state.caseId}`); renderPanel(); }
         catch (error) { panel.appendChild(el("p", "small error-text", error.message)); }
       });
       panel.appendChild(accept);
@@ -1440,15 +1421,14 @@ function renderCompliance(panel, data) {
 
 function renderTabs() {
   const tabs = $("case-tabs");
-  clear(tabs);
+  tabs.replaceChildren();
   const visible = TABS.filter(([key]) => !(key === "copilot" && state.me.role === "loan_officer"));
   if (!visible.some(([key]) => key === state.tab)) state.tab = visible[0][0];
   visible.forEach(([key, label]) => {
-    const button = el("button", null, label);
-    button.setAttribute("role", "tab");
-    button.setAttribute("aria-selected", String(state.tab === key));
-    button.addEventListener("click", () => { state.tab = key; renderTabs(); });
-    tabs.appendChild(button);
+    const tab = button(label, null, () => { state.tab = key; renderTabs(); });
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(state.tab === key));
+    tabs.appendChild(tab);
   });
   renderPanel();
 }
@@ -1467,7 +1447,7 @@ function citeRow(ids, clauses) {
 function renderPanel() {
   const panel = $("case-panel");
   const data = state.caseData;
-  clear(panel);
+  panel.replaceChildren();
   if (state.tab === "memo") {
     if (!data.memo) { panel.appendChild(el("p", "muted", "The memo has not been written yet.")); return; }
     const meta = el("p", "small muted");
@@ -1614,51 +1594,15 @@ function renderCopilot(panel) {
 const COPILOT_FALLBACK = ["Why this recommendation?", "What did the integrity checks find?",
   "Which month had the lowest income?", "What if we lend 3,00,000 over 36 months?"];
 function copilotQuestions() {
-  const box = el("div", "copilot-questions");
-  const topics = el("div", "guide-topics");
-  topics.setAttribute("role", "tablist");
-  const chips = el("div", "chips");
-  const more = el("details", "guide-more");
-  const list = el("div", "guide-more-list");
-  more.append(el("summary", "small", "More questions"), list);
-  box.append(topics, chips, more);
-  const button = (text, className) => {
-    const b = el("button", className, text);
-    b.type = "button";
-    b.addEventListener("click", () => { more.open = false; askCopilot(text); });
-    return b;
-  };
-  const draw = () => {
-    const groups = state.copilotGroups;
-    if (!groups?.length) {
-      chips.replaceChildren(...COPILOT_FALLBACK.map((q) => button(q)));
-      more.classList.add("hidden");
-      return;
-    }
-    state.copilotTag = groups.some((g) => g.tag === state.copilotTag) ? state.copilotTag : groups[0].tag;
-    topics.replaceChildren(el("span", "small muted", "Ask about"), ...groups.map((g) => {
-      const pill = el("button", "guide-topic", g.label);
-      pill.type = "button";
-      pill.setAttribute("role", "tab");
-      pill.setAttribute("aria-selected", String(g.tag === state.copilotTag));
-      pill.addEventListener("click", () => { state.copilotTag = g.tag; draw(); });
-      return pill;
-    }));
-    const current = groups.find((g) => g.tag === state.copilotTag);
-    chips.replaceChildren(...current.questions.filter((q) => q.featured).map((q) => button(q.text)));
-    more.classList.remove("hidden");
-    list.replaceChildren(...groups.map((g) => {
-      const section = el("div", "guide-more-group");
-      section.appendChild(el("b", "small", g.label));
-      g.questions.forEach((q) => section.appendChild(button(q.text, "guide-more-q")));
-      return section;
-    }));
-  };
+  const picker = questionPicker({ onAsk: askCopilot, memory: (state.copilotPicker ||= {}) });
+  picker.root.classList.add("copilot-questions");
+  const draw = () => picker.render({ groups: state.copilotGroups, fallback: COPILOT_FALLBACK,
+                                     labels: { topics: "Ask about", more: "More questions" } });
   draw();
   if (!state.copilotGroups) {
     api("/api/copilot/questions").then((body) => { state.copilotGroups = body.groups; draw(); }).catch(() => {});
   }
-  return box;
+  return picker.root;
 }
 
 function copilotTurn(turn) {
@@ -1693,9 +1637,7 @@ async function askCopilot(question) {
   state.copilot.push({ question, text: "…", evidence_ids: [], tool_calls: [], author: "" });
   renderPanel();
   try {
-    const answer = await api(`/api/cases/${state.caseId}/copilot`, {
-      method: "POST", body: JSON.stringify({ question }),
-    });
+    const answer = await post(`/api/cases/${state.caseId}/copilot`, { question });
     state.copilot[state.copilot.length - 1] = Object.assign({ question }, answer);
   } catch (error) {
     state.copilot[state.copilot.length - 1] = { question, text: error.message, evidence_ids: [], tool_calls: [] };
@@ -1731,7 +1673,7 @@ function monthlyBars(monthly) {
 
 function renderViewer() {
   const select = $("doc-select");
-  clear(select);
+  select.replaceChildren();
   state.caseData.documents.forEach((doc) => {
     const option = el("option", null, `${doc.filename} · ${doc.pages}p`);
     option.value = doc.doc_id;
@@ -1744,7 +1686,7 @@ function renderViewer() {
 
 function drawPages() {
   const stack = $("page-stack");
-  clear(stack);
+  stack.replaceChildren();
   const doc = state.caseData.documents.find((d) => d.doc_id === state.docId);
   if (!doc) return;
   for (let page = 1; page <= doc.pages; page += 1) {
@@ -1796,7 +1738,7 @@ function markEvidence(ids) {
 
 function renderDecision() {
   const panel = $("decision-panel");
-  clear(panel);
+  panel.replaceChildren();
   const data = state.caseData;
   if (state.me.role === "loan_officer") {
     const text = data.decision ? `Decision recorded: ${OUTCOME_TEXT[data.decision.final_outcome] || data.decision.final_outcome}`
@@ -1863,11 +1805,11 @@ function renderDecision() {
   save.addEventListener("click", async () => {
     save.disabled = true;
     try {
-      const result = await api(`/api/cases/${state.caseId}/decision`, { method: "POST", body: JSON.stringify({
+      const result = await post(`/api/cases/${state.caseId}/decision`, {
         outcome: outcome.value,
         approved_amount: Number(amount.value) || null,
         reason: reason.value.trim() || null,
-      }) });
+      });
       note.textContent = result.status === "pending_second_approval"
         ? "Recorded as a proposal. A second underwriter must countersign this amount."
         : "Decision recorded and the applicant has been told.";
@@ -1884,7 +1826,7 @@ function renderDecision() {
 async function loadPortfolio() {
   const p = await api("/api/risk/portfolio");
   const host = $("risk-portfolio");
-  clear(host);
+  host.replaceChildren();
   const tiles = el("div", "metrics");
   [["applications", p.applications], ["approval rate", p.approval_rate == null ? "—" : `${Math.round(p.approval_rate * 100)}%`],
    ["fraud flag rate", p.fraud_flag_rate == null ? "—" : `${Math.round(p.fraud_flag_rate * 100)}%`],
@@ -1933,7 +1875,7 @@ function wireKnowledge() {
   const out = $("kb-results");
   const go = async () => {
     const q = input.value.trim();
-    clear(out);
+    out.replaceChildren();
     if (!q) return;
     const r = await api(`/api/knowledge/search?q=${encodeURIComponent(q)}`);
     if (!r.results.length) out.appendChild(el("p", "muted", "Nothing in the policy or glossary matches that question."));
@@ -1953,7 +1895,7 @@ async function loadRisk() {
   wireKnowledge();
   const data = await api("/api/risk/overview");
   const metrics = $("risk-metrics");
-  clear(metrics);
+  metrics.replaceChildren();
   [["cases scored", data.cases_scored], ["decisions", data.decisions_recorded], ["overrides", data.overrides],
    ["memo revisions", data.memo_revisions], ["claims removed by gate", data.claims_dropped_by_gate],
    ["callbacks asked for", data.callbacks_requested]].forEach(([label, value]) => {
@@ -1964,7 +1906,7 @@ async function loadRisk() {
   drawBars($("risk-bands"), Object.entries(data.bands));
   drawBars($("risk-signals"), Object.entries(data.signal_frequency), true);
   const overrides = $("risk-overrides");
-  clear(overrides);
+  overrides.replaceChildren();
   if (!data.override_examples.length) overrides.appendChild(el("p", "muted", "No underwriter has overridden a recommendation yet."));
   data.override_examples.forEach((item) => {
     overrides.appendChild(el("p", null, `${item.case_id}: ${item.from} → ${item.to} — ${item.reason || "no reason given"}`));
@@ -1973,7 +1915,7 @@ async function loadRisk() {
     ? "Audit chain verified: every entry hashes onto the one before it."
     : "Audit chain broken — investigate immediately.";
   const audit = $("risk-audit");
-  clear(audit);
+  audit.replaceChildren();
   data.audit_tail.slice().reverse().forEach((event) => {
     const row = el("tr");
     row.append(el("td", null, String(event.seq)), el("td", null, event.at.slice(11, 19)),
@@ -1984,7 +1926,7 @@ async function loadRisk() {
 }
 
 function drawBars(container, entries, wideLabels = false) {
-  clear(container);
+  container.replaceChildren();
   container.classList.toggle("wide-labels", wideLabels);
   const peak = Math.max(...entries.map(([, value]) => value), 1);
   entries.forEach(([label, value]) => {
@@ -1999,23 +1941,13 @@ function drawBars(container, entries, wideLabels = false) {
 /* ------------------------------------------------------------------ video guide */
 
 // The guide's buttons take the customer to the right place; submitting and accepting stay with them.
-// The first required field of a new application that is still empty or invalid, for the video guide.
-// Mirrors the server's checks; "consent" and "save" when only those are left.
-const GUIDE_FIELD_CHECKS = [
-  ["full_name", (v) => v.trim().length >= 2],
-  ["mobile", (v) => /^[6-9]\d{9}$/.test(v.replace(/\D/g, "").replace(/^91(?=\d{10}$)/, ""))],
-  ["pan", (v) => /^[A-Z]{5}\d{4}[A-Z]$/i.test(v.trim())],
-  ["business_name", (v) => v.trim().length >= 2],
-  ["address_line", (v) => v.trim().length >= 3],
-  ["city", (v) => v.trim().length >= 2],
-  ["pincode", (v) => /^[1-9]\d{5}$/.test(v.trim())],
-];
 const GUIDE_FIELD_TARGET = { consent: "f-consent", save: "f-save" };
+// What the video guide should point at next on a new application: a field, the consent box, or Save.
 function nextGuideField() {
   if (!$("a-full_name") || $("f-consent")?.disabled) return null;
-  const missing = GUIDE_FIELD_CHECKS.find(([key, ok]) => !ok($(`a-${key}`)?.value || ""));
-  if (missing) return missing[0];
-  return $("f-consent")?.checked ? "save" : "consent";
+  const [problem] = applicantProblems();
+  if (problem) return problem[0].slice("a-".length);
+  return $("f-consent").checked ? "save" : "consent";
 }
 
 const GUIDE_ACTIONS = {
@@ -2041,13 +1973,13 @@ const GUIDE_ACTIONS = {
     input?.click();
   },
   submit() {
-    const button = Array.from(document.querySelectorAll("#view-apply button.stamp"))
+    const submitBtn = Array.from(document.querySelectorAll("#view-apply button.stamp"))
       .find((b) => b.textContent === "Submit for assessment");
-    if (!button) return;
-    button.scrollIntoView({ behavior: "smooth", block: "center" });
-    button.classList.add("guide-pulse");
-    button.focus();
-    setTimeout(() => button.classList.remove("guide-pulse"), 4000);
+    if (!submitBtn) return;
+    submitBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+    submitBtn.classList.add("guide-pulse");
+    submitBtn.focus();
+    setTimeout(() => submitBtn.classList.remove("guide-pulse"), 4000);
   },
   view_decision() { if (state.caseId) openMine({ case_id: state.caseId }); },
   // The form interview: which fields are empty, filling one, and handing consent and the save to the customer.
@@ -2072,12 +2004,12 @@ const GUIDE_ACTIONS = {
   },
   async callback() {
     if (!state.caseId) return;
-    await api(`/api/cases/${state.caseId}/callback`, { method: "POST",
-      body: JSON.stringify({ note: "Requested from the video guide" }) });
+    await post(`/api/cases/${state.caseId}/callback`, { note: "Requested from the video guide" });
   },
 };
 guide = createGuide({
   api,
+  post,
   // Only the application on screen is the guide's subject; the list and account pages are not.
   context: () => ({ caseId: ["apply", "progress", "outcome"].includes(currentView) ? state.caseId : null,
                     screen: currentView === "mine" ? "list" : "application",

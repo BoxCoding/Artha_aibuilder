@@ -16,12 +16,12 @@ import hashlib
 import json
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from app.domain.models import AuditEvent, Case, CaseStatus, PipelineEvent
+from app.domain.models import AuditEvent, Case, CaseStatus
 
 
 class CaseNotFound(KeyError):
@@ -200,10 +200,6 @@ class InMemoryStore:
                 raise CaseNotFound(case_id)
             return self._versions.get(case_id, 0)
 
-    def add_event(self, case_id: str, event: PipelineEvent) -> None:
-        with self._lock:
-            self.get(case_id).events.append(event)
-
     # ------------------------------------------------------------------ files
     def put_file(self, case_id: str, doc_id: str, data: bytes) -> None:
         with self._lock:
@@ -270,7 +266,7 @@ class InMemoryStore:
 
     def verify_audit_chain(self) -> bool:
         with self._lock:
-            return verify_chain(self._audit)
+            return first_broken_link(self._audit) is None
 
     def audit_for(self, case_id: str, limit: int = 500) -> list[AuditEvent]:
         with self._lock:
@@ -333,22 +329,17 @@ def build_audit_event(seq: int, prev: str, actor: str, role: str, action: str, r
                       detail_hash=detail_hash, prev_hash=prev, event_hash=event_hash)
 
 
-def verify_chain(events: Any) -> bool:
-    prev = GENESIS_HASH
-    expected_seq = 1
+def first_broken_link(events: Iterable[Any]) -> int | None:
+    """Sequence number of the first audit event that does not chain from the one before, or None.
+    `at` is a datetime in memory and the stored ISO text in SQL; both hash the same."""
+    prev, expected_seq = GENESIS_HASH, 1
     for e in events:
-        expected = chain_hash(e.seq, e.at.isoformat(), e.actor, e.role, e.action, e.resource, e.detail_hash, prev)
+        at = e.at if isinstance(e.at, str) else e.at.isoformat()
+        expected = chain_hash(e.seq, at, e.actor, e.role, e.action, e.resource, e.detail_hash, prev)
         if e.seq != expected_seq or e.prev_hash != prev or e.event_hash != expected:
-            return False
-        prev = e.event_hash
-        expected_seq += 1
-    return True
-
-
-# Kept for callers of the prototype's private name.
-def _chain_hash(seq: int, at: datetime, actor: str, role: str, action: str, resource: str, detail_hash: str,
-                prev: str) -> str:
-    return chain_hash(seq, at.isoformat(), actor, role, action, resource, detail_hash, prev)
+            return e.seq
+        prev, expected_seq = e.event_hash, expected_seq + 1
+    return None
 
 
 _store: CaseStore | None = None
@@ -371,10 +362,3 @@ def get_store() -> CaseStore:
                 else:
                     _store = InMemoryStore(settings.max_cases_in_memory)
     return _store
-
-
-def reset_store() -> None:
-    """Drop the cached store (tests, and after configuration changes)."""
-    global _store
-    with _store_lock:
-        _store = None

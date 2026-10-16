@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,7 +35,7 @@ from app.observability import configure_logging, new_request_id, request_id_var
 from app.documents.render import render_crop, render_page_png
 from app.domain.models import (OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Document, Explanation, Outcome, Role)
 from app.domain.store import CaseNotFound, get_store
-from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, get_accounts
+from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, User, get_accounts
 from app.events import publish_event
 from app.journey.state import journey
 from app.pipeline.workflow import mark_needs_manual, submit_case
@@ -202,6 +202,22 @@ async def sign_in(payload: LoginRequest, request: Request, response: Response) -
     return {"uid": user.uid, "name": user.name, "role": user.role.value}
 
 
+async def _new_account(payload: RegisterRequest | CreateUserRequest, role: Role) -> User:
+    """Raises AccountExists for a taken email, so self-registration can answer it its own way."""
+    try:
+        return await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password, role,
+                                       payload.gender)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+async def _staff_account(payload: CreateUserRequest, role: Role) -> User:
+    try:
+        return await _new_account(payload, role)
+    except AccountExists as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
+
+
 @app.post("/api/register", status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, request: Request, response: Response) -> dict[str, Any]:
     """Borrower self-registration. Staff accounts are created with `python -m app.cli create-user`."""
@@ -210,14 +226,10 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed.")
     enforce(f"register-ip:{client_ip(request, settings)}", 5, 3600)
     try:
-        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password,
-                                       Role.BORROWER, payload.gender)
+        user = await _new_account(payload, Role.BORROWER)
     except AccountExists as exc:
-        # Deliberately the same shape as a validation error; the audit log records what happened.
         get_store().audit("anonymous", "none", "REGISTER_DUPLICATE", "account", {"email_sha": _digest(payload.email)})
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists. Sign in instead.") from exc
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     issue_session(response, user, settings)
     get_store().audit(user.uid, user.role.value, "REGISTER", "account", {})
     return {"uid": user.uid, "name": user.name, "role": user.role.value}
@@ -242,16 +254,9 @@ async def first_run_setup(payload: CreateUserRequest, request: Request, response
     """Create the first administrator. Open only until one exists; after that, staff are added by an admin."""
     settings = get_settings()
     enforce(f"setup-ip:{client_ip(request, settings)}", 5, 3600)
-    accounts = get_accounts()
-    if not await asyncio.to_thread(accounts.needs_setup):
+    if not await asyncio.to_thread(get_accounts().needs_setup):
         raise HTTPException(status.HTTP_409_CONFLICT, "Setup is already complete. Sign in instead.")
-    try:
-        user = await asyncio.to_thread(accounts.register, payload.email, payload.name, payload.password,
-                                       Role.RISK_ADMIN)
-    except AccountExists as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    user = await _staff_account(payload, Role.RISK_ADMIN)
     issue_session(response, user, settings)
     get_store().audit(user.uid, user.role.value, "FIRST_ADMIN_CREATED", "account", {})
     return {"uid": user.uid, "name": user.name, "role": user.role.value}
@@ -271,13 +276,7 @@ async def create_user(payload: CreateUserRequest,
                       principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
     """Add a loan officer, credit officer, administrator or customer account."""
     enforce(f"admin-create:{principal.uid}", 30, 3600)
-    try:
-        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password,
-                                       payload.role, payload.gender)
-    except AccountExists as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    user = await _staff_account(payload, payload.role)
     get_store().audit(principal.uid, principal.role.value, "ACCOUNT_CREATED", user.uid, {"role": user.role.value})
     return {"uid": user.uid, "email": user.email, "role": user.role.value}
 
@@ -355,6 +354,17 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.strip().lower().encode()).hexdigest()[:16]
 
 
+def _case_for(case_id: str, principal: Principal) -> Case:
+    """The case, if this person may see it; 404/403 otherwise."""
+    case = get_store().get(case_id)
+    authorise_case(case, principal)
+    return case
+
+
+def _meter() -> UsageMeter:
+    return UsageMeter(budget=get_settings().token_budget_per_case)
+
+
 # --------------------------------------------------------------------------- borrower flow
 
 @app.post("/api/cases", status_code=status.HTTP_201_CREATED)
@@ -389,8 +399,7 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
     which bank, account and period it covers, or why it cannot be used. The password is never stored."""
     settings = get_settings()
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     _check_can_attach(case, settings.max_documents_per_case)
     data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
     prepared = await asyncio.to_thread(validate_upload, file.filename or "statement.pdf", data, settings,
@@ -427,7 +436,7 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
 async def remove_document(case_id: str, doc_id: str, principal: Principal = Depends(limiter(30))) -> dict[str, str]:
     """Take back a statement before submitting (wrong file, wrong account)."""
     store = get_store()
-    authorise_case(store.get(case_id), principal)
+    _case_for(case_id, principal)
     with store.mutate(case_id) as live:
         if live.status != CaseStatus.DRAFT:
             raise HTTPException(status.HTTP_409_CONFLICT, "Documents cannot be changed after submission.")
@@ -448,8 +457,7 @@ async def attach_sample(case_id: str, persona: str = Body(embed=True),
     if persona not in PERSONAS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown sample.")
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     _check_can_attach(case, get_settings().max_documents_per_case)
     data = await asyncio.to_thread(lambda: render_pdf(persona_statement(persona)))
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
@@ -465,7 +473,7 @@ async def attach_sample(case_id: str, persona: str = Body(embed=True),
 @app.post("/api/cases/{case_id}/submit")
 async def submit(case_id: str, principal: Principal = Depends(limiter(20))) -> dict[str, Any]:
     store = get_store()
-    authorise_case(store.get(case_id), principal)
+    _case_for(case_id, principal)
     with store.mutate(case_id) as live:  # check-and-set under the row lock: a double click queues once
         if not live.documents:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add at least one bank statement before submitting.")
@@ -505,9 +513,7 @@ async def my_cases(principal: Principal = Depends(require_roles(Role.BORROWER, R
 
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: str, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
-    store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     explanation = case.explanations.get(case.language) if case.decision else None
     return case_view(case, principal.role, explanation)
 
@@ -516,7 +522,7 @@ async def get_case(case_id: str, principal: Principal = Depends(current_principa
 async def case_events(case_id: str, principal: Principal = Depends(current_principal)) -> StreamingResponse:
     """Server-sent events: pipeline progress, then the final case payload."""
     store = get_store()
-    authorise_case(store.get(case_id), principal)
+    _case_for(case_id, principal)
 
     async def stream():  # type: ignore[no-untyped-def]
         seen, marker = 0, -1
@@ -553,13 +559,12 @@ async def case_events(case_id: str, principal: Principal = Depends(current_princ
 async def coach(case_id: str, payload: CoachRequest,
                 principal: Principal = Depends(limiter(20, 60))) -> dict[str, Any]:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     explanation = case.explanations.get(case.language)
     if not explanation:
         raise HTTPException(status.HTTP_409_CONFLICT, "The decision is not ready yet.")
     draft, author = await coach_reply(explanation, payload.message, get_gateway(),
-                                      UsageMeter(budget=get_settings().token_budget_per_case))
+                                      _meter())
     store.audit(principal.uid, principal.role.value, "COACH_MESSAGE", case_id, {"author": author})
     return {"reply": draft.reply, "offer_callback": draft.offer_callback, "author": author}
 
@@ -573,14 +578,13 @@ async def ask_statement(case_id: str, payload: AskRequest,
 
     if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
-    case = get_store().get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     if not case.transactions:
         raise HTTPException(status.HTTP_409_CONFLICT, "You can ask about your statement once it has been read.")
     settings = get_settings()
     language = payload.language if payload.language in settings.supported_languages else case.language
     result = await statement_qa.answer(case, payload.question, language, get_gateway(),
-                                       UsageMeter(budget=settings.token_budget_per_case))
+                                       _meter())
     get_store().audit(principal.uid, principal.role.value, "STATEMENT_QUESTION", case_id,
                       {"author": result["author"], "understood": result["understood"]})
     return result
@@ -603,8 +607,7 @@ async def form_voice(payload: VoiceFormRequest, principal: Principal = Depends(l
 async def journey_state(case_id: str,
                         principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
     """Where the customer is and what they need to do next. Borrower-safe: no scores or findings."""
-    case = get_store().get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     return journey(case, get_settings().max_documents_per_case)
 
 
@@ -618,8 +621,7 @@ async def guide_questions(language: str = "en", case_id: str | None = None,
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
     case = None
     if case_id:
-        case = get_store().get(case_id)
-        authorise_case(case, principal)
+        case = _case_for(case_id, principal)
     return {"groups": suggestions(case, language)}
 
 
@@ -631,8 +633,7 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
     settings = get_settings()
     case = None
     if payload.case_id:
-        case = get_store().get(payload.case_id)
-        authorise_case(case, principal)
+        case = _case_for(payload.case_id, principal)
     language = payload.language if payload.language in settings.supported_languages else (
         case.language if case else "en")
     if payload.screen == "list" and case is None:
@@ -646,7 +647,7 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
             state["field"] = payload.field
     state["greet"] = payload.greet
     result = await guide_reply(state, payload.message, language, case, get_gateway(),
-                               UsageMeter(budget=settings.token_budget_per_case), presenter=payload.presenter)
+                               _meter(), presenter=payload.presenter)
     if payload.message.strip():
         get_store().audit(principal.uid, principal.role.value, "GUIDE_MESSAGE", case.case_id if case else "no-case",
                           {"author": result["author"], "step": result["step"], "kind": result.get("kind")})
@@ -694,8 +695,7 @@ async def guide_avatar_stop(payload: AvatarStop, principal: Principal = Depends(
 async def request_callback(case_id: str, payload: CallbackRequest,
                            principal: Principal = Depends(limiter(5, 300))) -> dict[str, str]:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     store.add_callback({"case_id": case_id, "uid": principal.uid, "note": payload.note,
                         "at": datetime.now(timezone.utc).isoformat()})
     store.audit(principal.uid, principal.role.value, "REQUEST_CALLBACK", case_id, {})
@@ -714,8 +714,7 @@ async def queue(principal: Principal = Depends(require_roles(Role.UNDERWRITER, R
 async def page_image(case_id: str, doc_id: str, page: int,
                      principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     if page < 1 or page > 200 or not any(d.doc_id == doc_id for d in case.documents):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.")
     data = await asyncio.to_thread(store.get_file, case_id, doc_id)
@@ -730,8 +729,7 @@ async def page_image(case_id: str, doc_id: str, page: int,
 async def evidence_crop(case_id: str, evidence_id: str,
                         principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     evidence = case.evidence.get(evidence_id)
     if not evidence or not evidence.bbox:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found.")
@@ -853,7 +851,7 @@ def _four_eyes_threshold(case: Case) -> str:
 async def _ensure_explanations(case_id: str) -> None:
     store = get_store()
     case = store.get(case_id)
-    meter = UsageMeter(budget=get_settings().token_budget_per_case)
+    meter = _meter()
     languages = {case.language, "en"}
     built: dict[str, Explanation] = {}
     for lang in languages:
@@ -867,8 +865,7 @@ async def _ensure_explanations(case_id: str) -> None:
 
 @app.get("/api/cases/{case_id}/kfs")
 async def get_kfs(case_id: str, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
-    case = get_store().get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     if not case.kfs:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "A Key Fact Statement is issued when a loan is approved.")
     return case.kfs | {"accepted_at": case.kfs_accepted_at}
@@ -878,7 +875,7 @@ async def get_kfs(case_id: str, principal: Principal = Depends(current_principal
 async def accept_kfs(case_id: str, principal: Principal = Depends(limiter(10, 300))) -> dict[str, Any]:
     """The customer (or the loan officer, recording acceptance in person) accepts the KFS: the disbursal gate."""
     store = get_store()
-    authorise_case(store.get(case_id), principal)
+    _case_for(case_id, principal)
     if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the customer or their loan officer can accept the KFS.")
     with store.mutate(case_id) as live:
@@ -939,14 +936,13 @@ async def compliance_report(case_id: str, principal: Principal = Depends(
 async def explanation(case_id: str, language: str = "en",
                       principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     if not case.decision:
         raise HTTPException(status.HTTP_409_CONFLICT, "The decision is not ready yet.")
     language = language if language in get_settings().supported_languages else "en"
     if language not in case.explanations:
         built = await build_explanation(case, language, get_gateway(),
-                                        UsageMeter(budget=get_settings().token_budget_per_case))
+                                        _meter())
         with store.mutate(case_id) as live:
             live.explanations[language] = built
     return get_store().get(case_id).explanations[language].model_dump()
@@ -1041,8 +1037,7 @@ async def receipt_key() -> dict[str, Any]:
 async def issue_receipt(case_id: str, principal: Principal = Depends(limiter(30))) -> dict[str, Any]:
     """Issue a portable, signed record of the decision. The applicant can take this anywhere."""
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     if not case.decision:
         raise HTTPException(status.HTTP_409_CONFLICT, "A receipt is issued once a decision is recorded.")
     head, count = store.audit_head()
@@ -1068,8 +1063,7 @@ async def delete_case(case_id: str, principal: Principal = Depends(limiter(20)))
     """Data deletion right. The hash-chained audit log is intentionally retained: it holds digests,
     not personal data, and it is what keeps a past decision reviewable."""
     store = get_store()
-    case = store.get(case_id)
-    authorise_case(case, principal)
+    case = _case_for(case_id, principal)
     store.audit(principal.uid, principal.role.value, "CASE_DELETED", case_id,
                 {"documents": len(case.documents)})
     store.delete_case(case_id)
@@ -1083,7 +1077,7 @@ def _asset_version() -> str:
     import hashlib
 
     digest = hashlib.sha256()
-    for name in ("app.js", "guide.js", "face.js", "styles.css", "index.html"):
+    for name in ("app.js", "guide.js", "face.js", "ui.js", "styles.css", "index.html"):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:12]
 

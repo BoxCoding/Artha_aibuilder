@@ -9,6 +9,7 @@ built from it can be cited like a memo claim.
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from pathlib import Path
 import yaml
 
 from app.config import get_settings
+
+log = logging.getLogger("artha.knowledge")
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ("docs/RESPONSIBLE_AI.md", "docs/MODEL_CARD.md", "docs/DATA_CARD.md", "docs/THREAT_MODEL.md",
@@ -166,7 +169,7 @@ def search(query: str, audience: str = "customer", k: int = 5) -> list[dict[str,
             hits = vertex_search(query, k)
             if hits:
                 return hits
-        except Exception:  # noqa: BLE001 - fall back to the local index
-            pass
+        except Exception as exc:  # noqa: BLE001 - any failure falls back to the local index
+            log.warning("vertex_search_failed", extra={"error_type": type(exc).__name__})
     return [{"source": p.source, "title": p.title, "text": p.text, "engine": "local_bm25", "score": round(s, 3)}
             for p, s in local_index().search(query, audience, k)]

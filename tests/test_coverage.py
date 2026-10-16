@@ -308,7 +308,6 @@ def _docai_document() -> dict:
 def test_document_ai_tables_become_reconciled_transactions(gcp_mock, monkeypatch) -> None:
     from app.documents.document_ai import extract_with_document_ai
     from app.documents.universal_reader import reconciles
-    from tests.test_intake_and_roles import _encrypted  # noqa: F401 - shared helpers import cleanly
 
     calls, responses = gcp_mock
     responses["documentai.googleapis.com"] = {"document": _docai_document()}

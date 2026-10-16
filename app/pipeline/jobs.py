@@ -122,8 +122,3 @@ def get_queue() -> JobQueue:
         _queue = JobQueue(get_engine(), lease_seconds=settings.job_lease_seconds,
                           max_attempts=settings.job_max_attempts)
     return _queue
-
-
-def reset_queue() -> None:
-    global _queue
-    _queue = None

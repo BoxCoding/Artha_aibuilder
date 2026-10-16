@@ -10,8 +10,6 @@ from decimal import Decimal
 from app.cashflow.categorise import BUSINESS_CREDIT, DIGITAL_CREDIT
 from app.domain.models import Case, Evidence, Signal, Transaction
 
-FEATURE_SCHEMA_VERSION = "features.v2"
-
 
 def _month_key(d: date) -> str:
     return f"{d.year}-{d.month:02d}"
@@ -142,25 +140,25 @@ def cashflow_signals(case: Case) -> list[Signal]:
     out: list[Signal] = []
     if f["nach_returns_6m"] >= 1 and "ev-computed-returns" in case.evidence:
         out.append(Signal(signal_id="sig-rk-nach", code="RK-NACH-RETURNS", category="RISK",
-                          severity="HIGH" if f["nach_returns_3m"] >= 2 else "MEDIUM", confidence=0.95, detector="RULE",
-                          corroborated=True, evidence_ids=["ev-computed-returns"],
+                          severity="HIGH" if f["nach_returns_3m"] >= 2 else "MEDIUM", confidence=0.95,
+                          evidence_ids=["ev-computed-returns"],
                           title="Loan instalments returned unpaid",
                           explanation=f"{int(f['nach_returns_6m'])} instalment(s) bounced in six months, "
                                       f"{int(f['nach_returns_3m'])} in the last three."))
     if f["low_balance_days_share"] >= 0.25:
         out.append(Signal(signal_id="sig-rk-lowbal", code="RK-LOW-BALANCE", category="RISK", severity="MEDIUM",
-                          confidence=0.9, detector="RULE", corroborated=True, evidence_ids=["ev-computed-balance"],
+                          confidence=0.9, evidence_ids=["ev-computed-balance"],
                           title="Balance often close to zero",
                           explanation=f"Balance was very low on {f['low_balance_days_share']:.0%} of days."))
     if f["digital_share"] >= 0.7 and "ev-computed-inflow" in case.evidence:
         out.append(Signal(signal_id="sig-pos-digital", code="POS-DIGITAL-INFLOWS", category="POSITIVE", severity="INFO",
-                          confidence=0.95, detector="RULE", corroborated=True, evidence_ids=["ev-computed-inflow"],
+                          confidence=0.95, evidence_ids=["ev-computed-inflow"],
                           title="Mostly digital, traceable income",
                           explanation=f"{f['digital_share']:.0%} of business inflows arrive through UPI, bank transfer "
                                       "or card settlement."))
     if f["inflow_cv"] <= 0.2 and "ev-computed-inflow" in case.evidence:
         out.append(Signal(signal_id="sig-pos-stable", code="POS-STABLE-INFLOWS", category="POSITIVE", severity="INFO",
-                          confidence=0.9, detector="RULE", corroborated=True, evidence_ids=["ev-computed-inflow"],
+                          confidence=0.9, evidence_ids=["ev-computed-inflow"],
                           title="Steady monthly income",
                           explanation=f"Monthly inflows vary by only {f['inflow_cv']:.0%} around the average."))
     return out

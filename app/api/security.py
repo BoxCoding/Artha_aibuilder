@@ -1,7 +1,6 @@
 """Session handling, role checks, rate limiting and upload validation."""
 from __future__ import annotations
 
-import io
 import logging
 import threading
 import time
@@ -13,14 +12,12 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from app.config import Settings, get_settings
 from app.domain.models import Case, Role
-from app.domain.users import DEMO_ACCOUNTS, User, get_accounts
+from app.domain.users import User, get_accounts
 
 log = logging.getLogger("artha.security")
 
 COOKIE_NAME = "artha_session"
 PDF_MAGIC = b"%PDF-"
-# Kept for callers of the prototype's name: {email: (name, role)}.
-DEMO_USERS = DEMO_ACCOUNTS
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 

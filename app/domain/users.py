@@ -18,7 +18,11 @@ from typing import Protocol
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from sqlalchemy import ColumnElement, Engine, Row, insert, select, update
+from sqlalchemy.exc import IntegrityError
 
+from app.db import as_utc, sqlite_write_lock
+from app.db import users as users_table
 from app.domain.models import Role
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
@@ -128,16 +132,16 @@ class InMemoryUserRepository:
 
 
 class SqlUserRepository:
-    def __init__(self, engine) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
     @staticmethod
-    def _row_to_user(row) -> User:  # type: ignore[no-untyped-def]
+    def _row_to_user(row: Row) -> User:
         return User(uid=row.uid, email=row.email, name=row.name, role=Role(row.role), password_hash=row.password_hash,
                     is_demo=row.is_demo, active=row.active, session_version=row.session_version,
-                    failed_logins=row.failed_logins, locked_until=_aware(row.locked_until),
-                    created_at=_aware(row.created_at) or datetime.now(timezone.utc),
-                    last_login_at=_aware(row.last_login_at), gender=getattr(row, "gender", None))
+                    failed_logins=row.failed_logins, locked_until=as_utc(row.locked_until),
+                    created_at=as_utc(row.created_at) or datetime.now(timezone.utc),
+                    last_login_at=as_utc(row.last_login_at), gender=row.gender)
 
     @staticmethod
     def _values(user: User) -> dict[str, object]:
@@ -146,59 +150,33 @@ class SqlUserRepository:
                 "failed_logins": user.failed_logins, "locked_until": user.locked_until,
                 "created_at": user.created_at, "last_login_at": user.last_login_at, "gender": user.gender}
 
-    def get(self, uid: str) -> User | None:
-        from sqlalchemy import select
-
-        from app.db import users
-
+    def _one(self, where: ColumnElement[bool]) -> User | None:
         with self.engine.connect() as conn:
-            row = conn.execute(select(users).where(users.c.uid == uid)).first()
+            row = conn.execute(select(users_table).where(where)).first()
         return self._row_to_user(row) if row else None
+
+    def get(self, uid: str) -> User | None:
+        return self._one(users_table.c.uid == uid)
 
     def by_email(self, email: str) -> User | None:
-        from sqlalchemy import select
-
-        from app.db import users
-
-        with self.engine.connect() as conn:
-            row = conn.execute(select(users).where(users.c.email == email)).first()
-        return self._row_to_user(row) if row else None
+        return self._one(users_table.c.email == email)
 
     def create(self, user: User) -> User:
-        from sqlalchemy import insert
-        from sqlalchemy.exc import IntegrityError
-
-        from app.db import sqlite_write_lock, users
-
         try:
             with sqlite_write_lock, self.engine.begin() as conn:
-                conn.execute(insert(users).values(uid=user.uid, **self._values(user)))
+                conn.execute(insert(users_table).values(uid=user.uid, **self._values(user)))
         except IntegrityError as exc:
             raise AccountExists(user.email) from exc
         return user
 
     def save(self, user: User) -> None:
-        from sqlalchemy import update
-
-        from app.db import sqlite_write_lock, users
-
         with sqlite_write_lock, self.engine.begin() as conn:
-            conn.execute(update(users).where(users.c.uid == user.uid).values(**self._values(user)))
+            conn.execute(update(users_table).where(users_table.c.uid == user.uid).values(**self._values(user)))
 
     def list(self) -> list[User]:
-        from sqlalchemy import select
-
-        from app.db import users
-
         with self.engine.connect() as conn:
-            return [self._row_to_user(r) for r in conn.execute(select(users).order_by(users.c.created_at)).all()]
-
-
-def _aware(value: datetime | None) -> datetime | None:
-    """SQLite hands back naive datetimes; everything here is UTC."""
-    if value is not None and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
+            rows = conn.execute(select(users_table).order_by(users_table.c.created_at)).all()
+        return [self._row_to_user(r) for r in rows]
 
 
 class AccountService:
@@ -342,9 +320,3 @@ def get_accounts() -> AccountService:
                     service.seed_demo_accounts()
                 _service = service
     return _service
-
-
-def reset_accounts() -> None:
-    global _service
-    with _service_lock:
-        _service = None

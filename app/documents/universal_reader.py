@@ -65,7 +65,6 @@ OPENING_RE = re.compile(r"(opening balance|balance b/f|brought forward|balance f
 
 DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%y", "%d/%m/%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y",
                 "%d %b %Y", "%d %b %y", "%d/%b/%Y", "%d/%b/%y", "%d %B %Y", "%d-%B-%Y", "%Y-%m-%d", "%d%b%Y")
-DATE_TOKEN_RE = re.compile(r"^\d{1,2}[-/. ]?(?:\d{1,2}|[A-Za-z]{3,9})[-/. ]?\d{2,4}$|^\d{4}-\d{2}-\d{2}$")
 
 
 def parse_date(text: str) -> date | None:

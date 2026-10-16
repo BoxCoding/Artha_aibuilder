@@ -459,7 +459,7 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
 .checklist b { font-size: .95rem; font-weight: 600; }
 
 /* ------------------------------------------------------------------ video guide */
-:root { --av-skin: #c68a5e; --av-skin-shade: #b07650; --av-hair: #2a1c15; --av-ink: #1d1650; --av-lip: #8e3a46; --stage-ink: #fff; }
+:root { --stage-ink: #fff; }
 .guide-launcher {
   position: fixed; right: 1rem; bottom: 1rem; z-index: 40; display: flex; align-items: center; gap: .6rem;
   padding: .35rem 1rem .35rem .35rem; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-lg);
@@ -524,30 +524,6 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
 .guide-mini .presenter-ring { display: none; }
 .guide-mini[data-mood="talking"] { box-shadow: 0 0 0 3px #0fb5a6; }
 .guide-switch { font-size: 1rem; line-height: 1; font-weight: 700; }
-.av-skin { fill: var(--av-skin); }
-.av-hair { fill: var(--av-hair); }
-.av-shirt { fill: #f3f1ff; }
-.av-collar { fill: #ddd6ff; }
-.av-lanyard { stroke: #0fb5a6; stroke-width: 3; fill: none; }
-.av-badge { fill: #fff; stroke: #0fb5a6; stroke-width: 1.5; }
-.av-cheek { fill: #e0786a; opacity: .22; }
-.av-brows path { stroke: var(--av-hair); stroke-width: 3.2; fill: none; stroke-linecap: round; }
-.av-eye-white { fill: #fff; }
-.av-iris { fill: var(--av-ink); }
-.av-glint { fill: #fff; }
-.av-irises { transition: transform .25s ease-out; }
-.av-lids rect { transform-box: fill-box; transform-origin: center top; transform: scaleY(0); transition: transform .07s; }
-.blink .av-lids rect { transform: scaleY(1); }
-.av-nose { stroke: var(--av-skin-shade); stroke-width: 2.2; fill: none; stroke-linecap: round; }
-.av-mouth { fill: var(--av-lip); }
-.av-head, .av-body { transform-box: view-box; transform-origin: 120px 200px; }
-[data-mood] .av-head { transition: transform .5s ease; }
-[data-mood="idle"] .av-head { animation: guide-sway 7s ease-in-out infinite; }
-[data-mood="talking"] .av-head { animation: guide-talk-head 2.8s ease-in-out infinite; }
-[data-mood="listening"] .av-head { transform: rotate(-4deg) translateY(1px); }
-[data-mood="listening"] .av-brows { transform: translateY(-2px); }
-[data-mood="thinking"] .av-head { transform: rotate(3deg); }
-.av-body { animation: guide-breathe 4.5s ease-in-out infinite; }
 
 .guide-chip-step, .guide-listen {
   position: absolute; top: .6rem; padding: .2rem .6rem; border-radius: 999px; font-size: .76rem;
@@ -592,16 +568,13 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
 .guide-pulse { outline: 3px solid var(--brand); outline-offset: 3px; animation: guide-pulse 1s 3; }
 
 @keyframes guide-live { 50% { opacity: .35; } }
-@keyframes guide-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg) translateY(1px); } }
-@keyframes guide-talk-head { 0%, 100% { transform: rotate(-.8deg); } 30% { transform: rotate(1deg) translateY(-1px); } 65% { transform: rotate(-.3deg) translateY(1px); } }
-@keyframes guide-breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(1.2px); } }
 @keyframes guide-bars { 50% { transform: scaleY(.35); } }
 @keyframes guide-pulse { 50% { outline-offset: 7px; } }
 @media (max-width: 520px) {
   .guide-call, .guide-call.expanded { right: 0; bottom: 0; width: 100vw; max-height: 92vh; border-radius: 18px 18px 0 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-mood] .av-head, .av-body, .guide-live i, .guide-listen i, .guide-pulse, .presenter-img, .presenter-ring { animation: none !important; }
+  .guide-live i, .guide-listen i, .guide-pulse, .presenter-img, .presenter-ring { animation: none !important; }
 }
 
 /* Photoreal presenter (LiveAvatar) */

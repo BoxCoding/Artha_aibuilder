@@ -71,7 +71,7 @@ def aml_signals(case: Case) -> list[Signal]:
                                                       page=1, kind="COMPUTED", description="Applicant details (KYC)"))
                 signals.append(Signal(
                     signal_id=f"sig-aml-san-001-{field}", code="AML-SAN-001", category="COMPLIANCE", severity="HIGH",
-                    confidence=0.8, detector="RULE", corroborated=True, evidence_ids=[ev],
+                    confidence=0.8, evidence_ids=[ev],
                     title=f"The {field} name matches a watchlist entry",
                     explanation=f"'{value[:60]}' matches '{hit[0]}' on the {hit[1]} list. Compliance must review "
                                 "and clear this before the loan can be approved."))
@@ -86,7 +86,7 @@ def aml_signals(case: Case) -> list[Signal]:
     for n, (entry, evidence) in enumerate(sorted(hits.items())):
         signals.append(Signal(
             signal_id=f"sig-aml-san-002-{n}", code="AML-SAN-002", category="COMPLIANCE", severity="HIGH",
-            confidence=0.7, detector="RULE", corroborated=True, evidence_ids=evidence[:10],
+            confidence=0.7, evidence_ids=evidence[:10],
             title="A counterparty in the statement matches a watchlist entry",
             explanation=f"{len(evidence)} transaction(s) name a counterparty matching {entry}. Compliance must "
                         "review the relationship before approval."))
@@ -101,7 +101,7 @@ def aml_signals(case: Case) -> list[Signal]:
         if total >= threshold:
             signals.append(Signal(
                 signal_id=f"sig-aml-ctr-001-{month}", code="AML-CTR-001", category="COMPLIANCE", severity="MEDIUM",
-                confidence=0.95, detector="RULE", corroborated=True, evidence_ids=[r.evidence_id for r in rows][:10],
+                confidence=0.95, evidence_ids=[r.evidence_id for r in rows][:10],
                 title=f"Reportable cash deposits in {month}",
                 explanation=f"Cash deposits of ₹{total:,.0f} in {month} meet the ₹{threshold:,.0f} monthly reporting "
                             "threshold. This is a reporting duty for the lender, not a finding against the applicant."))

@@ -116,8 +116,8 @@ class Signal(Strict):
     category: Literal["FRAUD", "RISK", "POSITIVE", "COMPLIANCE"]
     severity: Literal["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
     confidence: float = Field(ge=0, le=1)
-    detector: Literal["RULE", "LLM_VISUAL", "MODEL_ARMOR"]
-    corroborated: bool
+    detector: Literal["RULE", "LLM_VISUAL", "MODEL_ARMOR"] = "RULE"
+    corroborated: bool = True
     evidence_ids: list[str] = Field(min_length=1)
     title: str
     explanation: str

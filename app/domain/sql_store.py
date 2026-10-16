@@ -22,8 +22,8 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import audit_log, callbacks, cases, documents, fingerprints, is_postgres, jobs, outbox, sqlite_write_lock
 from app.domain.models import AuditEvent, Case, CaseStatus
-from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, chain_hash, owner_row,
-                              queue_row)
+from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, first_broken_link,
+                              owner_row, queue_row)
 
 log = logging.getLogger("artha.store")
 AUDIT_LOCK_KEY = 0x4152_5448  # "ARTH"
@@ -198,16 +198,12 @@ class SqlStore:
 
     def verify_audit_chain(self) -> bool:
         """Recompute every link from the stored text. Streams rows, so memory stays flat."""
-        prev, expected_seq = GENESIS_HASH, 1
         with self.engine.connect() as conn:
-            result = conn.execution_options(yield_per=1000).execute(select(audit_log).order_by(audit_log.c.seq))
-            for r in result:
-                expected = chain_hash(r.seq, r.at, r.actor, r.role, r.action, r.resource, r.detail_hash, prev)
-                if r.seq != expected_seq or r.prev_hash != prev or r.event_hash != expected:
-                    log.error("audit_chain_broken", extra={"detail": f"seq={r.seq}"})
-                    return False
-                prev, expected_seq = r.event_hash, expected_seq + 1
-        return True
+            rows = conn.execution_options(yield_per=1000).execute(select(audit_log).order_by(audit_log.c.seq))
+            broken = first_broken_link(rows)
+        if broken is not None:
+            log.error("audit_chain_broken", extra={"detail": f"seq={broken}"})
+        return broken is None
 
     # ------------------------------------------------------------------ lifecycle
     def delete_case(self, case_id: str) -> bool:

@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
+from app.db import as_utc
 from app.domain.models import Case, Evidence, Signal
 
 VELOCITY_WINDOW_DAYS = 30
@@ -67,7 +68,7 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
     if reused:
         signals.append(Signal(
             signal_id="sig-fr-xapp-001-0", code="FR-XAPP-001", category="FRAUD", severity="HIGH", confidence=0.9,
-            detector="RULE", corroborated=True, evidence_ids=(header or anchor),
+            evidence_ids=(header or anchor),
             title="Same statement file in another applicant's application",
             explanation=(f"The identical statement file was submitted in {len(reused)} other application(s) by a "
                          "different applicant. A genuine statement belongs to one account holder.")))
@@ -75,7 +76,7 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
     if shared_account:
         signals.append(Signal(
             signal_id="sig-fr-xapp-002-0", code="FR-XAPP-002", category="FRAUD", severity="MEDIUM", confidence=0.65,
-            detector="RULE", corroborated=True, evidence_ids=(header or anchor),
+            evidence_ids=(header or anchor),
             title="Bank account used by another applicant",
             explanation=(f"The same bank account appears in {len(shared_account)} application(s) from a different "
                          "PAN. Family businesses sometimes share accounts; confirm who operates it.")))
@@ -83,21 +84,17 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
     if shared_mobile:
         signals.append(Signal(
             signal_id="sig-fr-xapp-003-0", code="FR-XAPP-003", category="FRAUD", severity="MEDIUM", confidence=0.55,
-            detector="RULE", corroborated=True, evidence_ids=anchor or header,
+            evidence_ids=anchor or header,
             title="Mobile number used by another applicant",
             explanation=(f"This mobile number was given in {len(shared_mobile)} application(s) under a different PAN. "
                          "Agents sometimes enter their own number; confirm the applicant's contact details.")))
     cutoff = datetime.now(timezone.utc) - timedelta(days=VELOCITY_WINDOW_DAYS)
-    recent = {m["case_id"] for m in matches if m["kind"] == "pan" and _aware(m["created_at"]) >= cutoff}
+    recent = {m["case_id"] for m in matches if m["kind"] == "pan" and as_utc(m["created_at"]) >= cutoff}
     if len(recent) >= VELOCITY_LIMIT:
         signals.append(Signal(
             signal_id="sig-fr-vel-001-0", code="FR-VEL-001", category="RISK", severity="MEDIUM", confidence=0.6,
-            detector="RULE", corroborated=True, evidence_ids=anchor or header,
+            evidence_ids=anchor or header,
             title="Many applications in a short time",
             explanation=(f"This PAN has {len(recent)} other applications in the last {VELOCITY_WINDOW_DAYS} days. "
                          "Check for loan stacking or repeated attempts with different documents.")))
     return [s for s in signals if s.evidence_ids]
-
-
-def _aware(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)

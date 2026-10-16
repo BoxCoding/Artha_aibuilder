@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.cashflow.categorise import apply_rules  # noqa: E402
 from app.cashflow.features import compute_features  # noqa: E402
 from app.risk.engine import score  # noqa: E402
-from app.risk.ml_model import (ModelMetrics, MODEL_VERSION, expected_calibration_error, gini,  # noqa: E402
+from app.risk.ml_model import (ModelMetrics, MODEL_VERSION, gini,  # noqa: E402
                                ks_statistic, save, to_vector, train)
 from app.risk.outcomes import build_training_case, simulate_outcome  # noqa: E402
 from app.synthetic.generator import random_population  # noqa: E402

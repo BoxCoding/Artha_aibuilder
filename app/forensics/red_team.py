@@ -32,7 +32,7 @@ from app.domain.models import Case
 from app.forensics.rules import run_rules
 from app.security.injection import detect
 from app.synthetic.generator import (Profile, Statement, add_injection, mark_editor_resave, render_pdf,
-                                     statement_for, tamper_inflate_credits)
+                                     statement_for)
 
 SEVERE = ("HIGH", "CRITICAL")
 
