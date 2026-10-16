@@ -1,4 +1,4 @@
-/* Video guide: Sahayak, a video-call assistant that walks a customer through their application.
+/* Video guide: Saarthi, a video-call assistant that walks a customer through their application.
 
    - Voice: the browser's speech synthesis, with the most natural installed voice chosen per language
      (Premium / Enhanced / Natural / Google voices first, novelty voices never), spoken sentence by
@@ -16,35 +16,104 @@ const SPEECH_LANG = { en: "en-IN", hi: "hi-IN", id: "id-ID" };
 const VOICE_FALLBACKS = { en: ["en-IN", "en-GB", "en-AU", "en-US"], hi: ["hi-IN"], id: ["id-ID"] };
 // macOS ships these as joke or effect voices; they must never be picked automatically.
 const NOVELTY = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|eddy|flo|reed|sandy)\b/i;
-const NAME = "Sahayak";
+const NAME = "Saarthi";
+
+// The form interview: Saarthi asks for each empty field in turn.
+const FORM_ORDER = ["full_name", "mobile", "pan", "business_name", "industry", "business_start_year", "address_line",
+  "city", "state", "pincode", "requested_amount", "tenure_months"];
+const FORM_Q = {
+  en: { full_name: "What is your full name, as on your PAN card?", mobile: "What is your mobile number?",
+        pan: "Please say your PAN, letter by letter.", business_name: "What is the name of your business?",
+        industry: "What kind of business is it? For example a shop, a restaurant, transport or manufacturing.",
+        business_start_year: "Which year did the business start?",
+        address_line: "What is the business address? Just the street and area.", city: "Which city?",
+        state: "Which state?", pincode: "And the PIN code?",
+        requested_amount: "How much would you like to borrow? You can say, for example, three lakh.",
+        tenure_months: "Over how many months would you like to repay: 12, 18, 24 or 36?" },
+  hi: { full_name: "आपका पूरा नाम क्या है, जैसा PAN कार्ड पर है?", mobile: "आपका मोबाइल नंबर क्या है?",
+        pan: "कृपया अपना PAN एक-एक अक्षर बोलें।", business_name: "आपके व्यवसाय का नाम क्या है?",
+        industry: "आपका व्यवसाय किस तरह का है? जैसे दुकान, रेस्टोरेंट, ट्रांसपोर्ट या मैन्युफैक्चरिंग।",
+        business_start_year: "व्यवसाय किस साल शुरू हुआ?", address_line: "व्यवसाय का पता क्या है? सिर्फ़ गली और इलाका।",
+        city: "कौन सा शहर?", state: "कौन सा राज्य?", pincode: "और पिन कोड?",
+        requested_amount: "आपको कितना लोन चाहिए? जैसे, तीन लाख।",
+        tenure_months: "कितने महीनों में चुकाना चाहेंगे: 12, 18, 24 या 36?" },
+  id: { full_name: "Siapa nama lengkap Anda, sesuai kartu PAN?", mobile: "Berapa nomor ponsel Anda?",
+        pan: "Sebutkan PAN Anda, huruf demi huruf.", business_name: "Apa nama usaha Anda?",
+        industry: "Usaha Anda bergerak di bidang apa? Misalnya toko, restoran, transportasi, atau manufaktur.",
+        business_start_year: "Tahun berapa usaha dimulai?", address_line: "Apa alamat usaha Anda? Cukup jalan dan daerahnya.",
+        city: "Kota apa?", state: "Negara bagian apa?", pincode: "Dan kode PIN-nya?",
+        requested_amount: "Berapa pinjaman yang Anda butuhkan? Misalnya, tiga lakh.",
+        tenure_months: "Dalam berapa bulan ingin melunasi: 12, 18, 24, atau 36?" },
+};
+const FORM_TEXT = {
+  en: { fill: "🎙 Fill the form with me", stop: "■ Stop filling",
+        start: "Let's fill the form together. I'll ask one thing at a time. Say skip to leave one, back to change the last answer, or stop to finish. You'll check everything before it's saved.",
+        allFilled: "Your details are already filled in.", gotIt: "Got it: {value}.", notCaught: "Sorry, I didn't catch that.",
+        leaveIt: "I'll leave that one for you to type.",
+        done: "That's everything I need. Please read the consent text and tick the box yourself, then press Save and continue. I'll show you a summary to check before anything is saved.",
+        stopped: "Okay, I've stopped. You can carry on typing, or ask me to fill the form with you again.",
+        notHere: "Open New application first, then I can help you fill the form.",
+        typeInstead: "The microphone isn't available, so please type your answers in the box below.",
+        months: "months" },
+  hi: { fill: "🎙 मेरे साथ फ़ॉर्म भरें", stop: "■ भरना बंद करें",
+        start: "चलिए साथ में फ़ॉर्म भरते हैं। मैं एक-एक करके पूछूँगा। किसी को छोड़ने के लिए छोड़ो, पिछला जवाब बदलने के लिए पीछे, और खत्म करने के लिए बस बोलें। सेव से पहले आप सब कुछ जाँचेंगे।",
+        allFilled: "आपकी जानकारी पहले से भरी हुई है।", gotIt: "ठीक है: {value}।", notCaught: "माफ़ कीजिए, मैं समझ नहीं पाया।",
+        leaveIt: "इसे मैं आपके लिखने के लिए छोड़ देता हूँ।",
+        done: "मुझे बस इतना ही चाहिए था। कृपया सहमति वाला हिस्सा पढ़कर बॉक्स पर खुद टिक करें, फिर 'सेव करें और आगे बढ़ें' दबाएँ। सेव से पहले मैं आपको जाँचने के लिए पूरा सारांश दिखाऊँगा।",
+        stopped: "ठीक है, मैंने रोक दिया। आप लिखना जारी रख सकते हैं, या फिर से मेरे साथ फ़ॉर्म भरने को कह सकते हैं।",
+        notHere: "पहले 'नया आवेदन' खोलें, फिर मैं फ़ॉर्म भरने में मदद कर सकता हूँ।",
+        typeInstead: "माइक्रोफ़ोन उपलब्ध नहीं है, कृपया नीचे बॉक्स में जवाब लिखें।", months: "महीने" },
+  id: { fill: "🎙 Isi formulir bersama saya", stop: "■ Berhenti mengisi",
+        start: "Mari isi formulir bersama. Saya akan bertanya satu per satu. Ucapkan lewati untuk melewatkan, kembali untuk mengubah jawaban terakhir, atau berhenti untuk selesai. Anda akan memeriksa semuanya sebelum disimpan.",
+        allFilled: "Data Anda sudah terisi.", gotIt: "Baik: {value}.", notCaught: "Maaf, saya kurang menangkapnya.",
+        leaveIt: "Yang ini saya biarkan untuk Anda ketik.",
+        done: "Itu saja yang saya perlukan. Silakan baca teks persetujuan dan centang kotaknya sendiri, lalu tekan Simpan dan lanjutkan. Saya akan menampilkan ringkasan untuk diperiksa sebelum disimpan.",
+        stopped: "Baik, saya berhenti. Anda bisa lanjut mengetik, atau minta saya mengisi formulir lagi.",
+        notHere: "Buka Pengajuan baru dulu, lalu saya bisa membantu mengisi formulir.",
+        typeInstead: "Mikrofon tidak tersedia, silakan ketik jawaban Anda di kotak di bawah.", months: "bulan" },
+};
+const FORM_WORDS = {
+  start: ["fill the form", "fill my form", "help me fill", "fill it with me", "fill with me", "form bhar", "फ़ॉर्म भर",
+          "फॉर्म भर", "isi formulir", "bantu isi"],
+  stop: ["stop", "cancel", "finish", "enough", "रुको", "बंद", "बस", "berhenti", "selesai", "batal"],
+  skip: ["skip", "next", "later", "don't know", "dont know", "छोड़", "छोड़ो", "आगे", "बाद में", "lewati", "nanti"],
+  back: ["back", "previous", "change", "wrong", "पीछे", "गलत", "बदल", "kembali", "salah", "ubah"],
+  repeat: ["repeat", "again", "say that again", "दोबारा", "फिर से", "ulangi", "lagi"],
+};
 
 const UI = {
-  en: { role: "Your application guide", start: "Video call with Sahayak", onCall: "On call · tap to open",
+  en: { role: "Your application guide", start: "Video call with Saarthi", onCall: "On call · tap to open",
         placeholder: "Type a question", send: "Ask", step: "Step", of: "of", listening: "Listening…", thinking: "Thinking…",
         you: "You", mic: "Talk hands-free", micOff: "Stop listening", cam: "Camera", cc: "Captions", mute: "Mute voice",
         unmute: "Unmute voice", end: "End call", expand: "Larger", shrink: "Smaller", minimise: "Minimise",
         voice: "Voice", auto: "Best available", camNote: "Your camera is shown only to you.", interrupt: "Tap me to interrupt",
         aiBadge: "AI presenter", connecting: "Connecting the video presenter…", sound: "🔊 Tap to turn on sound",
+        avatarSilent: "The video presenter didn't respond, so I answered with this device's voice.",
+        topics: "Ask about", more: "More questions", moreHint: "Everything I can answer for your application right now",
         avatarEnded: "The video presenter has ended. I'll carry on from here.",
         noMic: "The microphone is blocked here. You can type your questions instead.",
         noCam: "The camera could not be opened here. Talking and typing still work.",
         list: "Here are your applications. Open one and I'll tell you where it stands, or start a new application.",
         chips: ["What do I do next?", "Which documents do you need?", "My statement has a password", "How long will it take?", "I want to talk to a person"] },
-  hi: { role: "आपका आवेदन गाइड", start: "सहायक से वीडियो कॉल", onCall: "कॉल पर · खोलने के लिए दबाएँ",
+  hi: { role: "आपका आवेदन गाइड", start: "सारथी से वीडियो कॉल", onCall: "कॉल पर · खोलने के लिए दबाएँ",
         placeholder: "अपना सवाल लिखें", send: "पूछें", step: "चरण", of: "में से", listening: "सुन रहा हूँ…", thinking: "सोच रहा हूँ…",
         you: "आप", mic: "बिना हाथ लगाए बात करें", micOff: "सुनना बंद करें", cam: "कैमरा", cc: "कैप्शन", mute: "आवाज़ बंद",
         unmute: "आवाज़ चालू", end: "कॉल समाप्त", expand: "बड़ा करें", shrink: "छोटा करें", minimise: "छोटा करके रखें",
         voice: "आवाज़", auto: "सबसे अच्छी उपलब्ध", aiBadge: "AI प्रस्तुतकर्ता", sound: "🔊 आवाज़ चालू करने के लिए दबाएँ",
+        avatarSilent: "वीडियो प्रस्तुतकर्ता ने जवाब नहीं दिया, इसलिए मैंने इस डिवाइस की आवाज़ में जवाब दिया।",
+        topics: "किस बारे में पूछें", more: "और सवाल", moreHint: "आपके आवेदन के लिए अभी मैं इन सबका जवाब दे सकता हूँ",
         connecting: "वीडियो प्रस्तुतकर्ता जुड़ रहा है…", avatarEnded: "वीडियो प्रस्तुतकर्ता का सत्र खत्म हो गया। मैं यहीं से आगे मदद करूँगा।", camNote: "आपका कैमरा सिर्फ़ आपको दिखता है।", interrupt: "रोकने के लिए मुझे दबाएँ",
         noMic: "यहाँ माइक्रोफ़ोन बंद है। आप अपना सवाल लिख सकते हैं।",
         noCam: "यहाँ कैमरा नहीं खुल सका। बात करना और लिखना अब भी काम करता है।",
         list: "ये आपके आवेदन हैं। किसी एक को खोलें, मैं बताऊँगा कि वह कहाँ तक पहुँचा है, या नया आवेदन शुरू करें।",
         chips: ["अब मुझे क्या करना है?", "कौन से दस्तावेज़ चाहिए?", "मेरे स्टेटमेंट पर पासवर्ड है", "कितना समय लगेगा?", "मुझे किसी से बात करनी है"] },
-  id: { role: "Pemandu pengajuan Anda", start: "Panggilan video dengan Sahayak", onCall: "Sedang panggilan · ketuk untuk membuka",
+  id: { role: "Pemandu pengajuan Anda", start: "Panggilan video dengan Saarthi", onCall: "Sedang panggilan · ketuk untuk membuka",
         placeholder: "Tulis pertanyaan", send: "Tanya", step: "Langkah", of: "dari", listening: "Mendengarkan…", thinking: "Berpikir…",
         you: "Anda", mic: "Bicara tanpa tangan", micOff: "Berhenti mendengarkan", cam: "Kamera", cc: "Teks", mute: "Bisukan suara",
         unmute: "Suarakan", end: "Akhiri panggilan", expand: "Perbesar", shrink: "Perkecil", minimise: "Kecilkan",
         voice: "Suara", auto: "Terbaik yang tersedia", aiBadge: "Presenter AI", sound: "🔊 Ketuk untuk menyalakan suara",
+        avatarSilent: "Presenter video tidak merespons, jadi saya menjawab dengan suara perangkat ini.",
+        topics: "Tanya tentang", more: "Pertanyaan lain", moreHint: "Semua yang bisa saya jawab untuk pengajuan Anda saat ini",
         connecting: "Menghubungkan presenter video…", avatarEnded: "Sesi presenter video telah berakhir. Saya lanjutkan dari sini.", camNote: "Kamera Anda hanya terlihat oleh Anda.", interrupt: "Ketuk saya untuk menyela",
         noMic: "Mikrofon diblokir di sini. Anda bisa mengetik pertanyaan.",
         noCam: "Kamera tidak bisa dibuka di sini. Bicara dan mengetik tetap berfungsi.",
@@ -262,7 +331,14 @@ export function createGuide({ api, context, actions }) {
   const body = el("div", "guide-body");
   const actionRow = el("div", "guide-actions");
   const transcript = el("div", "guide-transcript");
+  const topics = el("div", "guide-topics");
+  topics.setAttribute("role", "tablist");
   const chips = el("div", "chips guide-chips");
+  const more = el("details", "guide-more");
+  const moreSummary = el("summary", "small");
+  const moreHint = el("p", "small muted");
+  const moreList = el("div", "guide-more-list");
+  more.append(moreSummary, moreHint, moreList);
   const askRow = el("div", "guide-ask");
   const input = el("input");
   input.maxLength = 500;
@@ -273,7 +349,7 @@ export function createGuide({ api, context, actions }) {
   const voicePick = el("select", "guide-select");
   voiceRow.append(voiceLabel, voicePick);
   const note = el("p", "small muted guide-note");
-  body.append(actionRow, transcript, chips, askRow, voiceRow, note);
+  body.append(actionRow, transcript, topics, chips, more, askRow, voiceRow, note);
 
   call.append(top, stage, progress, controls, body);
   document.body.append(launcher, call);
@@ -392,7 +468,8 @@ export function createGuide({ api, context, actions }) {
 
   // When the server has a LiveAvatar key, the face and voice come from HeyGen's stream and the browser
   // voice stays silent. The avatar is in restricted mode: it says only the text we send it.
-  const avatar = { room: null, session: null, pending: null, starting: null };
+  // speaking: the presenter is mid-sentence (from its own events); onStarted: waits for the next sentence to begin.
+  const avatar = { room: null, session: null, pending: null, starting: null, speaking: false, onStarted: null };
   let liveAvatarOn = null;
   async function liveAvatarAvailable() {
     if (liveAvatarOn === null) {
@@ -451,8 +528,13 @@ export function createGuide({ api, context, actions }) {
           if (topic !== "agent-response") return;
           let event = {};
           try { event = JSON.parse(new TextDecoder().decode(payload)); } catch { return; }
-          if (event.event_type === "avatar.speak_started") setMood("talking");
-          if (event.event_type === "avatar.speak_ended") { setMood("idle"); avatar.pending?.(); avatar.pending = null; }
+          if (event.event_type === "avatar.speak_started") { avatar.speaking = true; setMood("talking"); avatar.onStarted?.(); }
+          if (event.event_type === "avatar.speak_ended") {
+            avatar.speaking = false;
+            setMood("idle");
+            avatar.pending?.();
+            avatar.pending = null;
+          }
           if (event.event_type === "session.stopped") endAvatar(true);
         });
         room.on(LK.RoomEvent.Disconnected, () => endAvatar(true));
@@ -496,7 +578,13 @@ export function createGuide({ api, context, actions }) {
 
   function stopSpeaking() {
     g.speakToken += 1;
-    if (avatar.room) { sendAvatar("avatar.interrupt"); avatar.pending?.(); avatar.pending = null; }
+    if (avatar.room) {
+      if (avatar.speaking) sendAvatar("avatar.interrupt");
+      avatar.speaking = false;
+      avatar.onStarted = null;
+      avatar.pending?.();
+      avatar.pending = null;
+    }
     if (synth) synth.cancel();
     lipsStop();
     if (stage.dataset.mood === "talking") setMood("idle");
@@ -506,17 +594,38 @@ export function createGuide({ api, context, actions }) {
   function say(text) {
     stopSpeaking();
     const token = g.speakToken;
-    const parts = sentences(text);
     addTranscript("bot", text);
     if (avatar.room && !g.muted) {
       captionNow.textContent = text;
-      sendAvatar("avatar.speak_text", { text });
-      // Resolve on the avatar's own "finished" event, with a ceiling in case that event never comes.
+      sendAvatar("avatar.speak_text", { text: forSpeech(text, g.lang) });
       return new Promise((resolve) => {
-        const ceiling = setTimeout(resolve, 4000 + text.length * 90);
-        avatar.pending = () => { clearTimeout(ceiling); resolve(); };
+        let ceiling = 0;
+        const done = () => {
+          clearTimeout(ceiling);
+          clearTimeout(startWait);
+          avatar.pending = null;
+          avatar.onStarted = null;
+          resolve();
+        };
+        // The answer must never be lost: if the presenter has not started speaking within 4 seconds,
+        // say it with the device voice instead.
+        const startWait = setTimeout(() => {
+          avatar.pending = null;
+          avatar.onStarted = null;
+          if (token !== g.speakToken) { resolve(); return; }
+          note.textContent = UI[g.lang].avatarSilent;
+          speakWithBrowser(text, token).then(resolve);
+        }, 4000);
+        // Once it starts, resolve on its own "finished" event, with a ceiling in case that never comes.
+        avatar.onStarted = () => { clearTimeout(startWait); ceiling = setTimeout(done, 4000 + text.length * 90); };
+        avatar.pending = done;
       });
     }
+    return speakWithBrowser(text, token);
+  }
+
+  function speakWithBrowser(text, token) {
+    const parts = sentences(text);
     if (g.muted || !synth || !parts.length) {
       captionNow.textContent = text;
       // Give a reader time before listening again in hands-free mode.
@@ -686,9 +795,141 @@ export function createGuide({ api, context, actions }) {
       });
       return button;
     }));
+    renderFormButtons();
+  }
+
+  /* ---------------------------------------------------------------- form interview */
+
+  const form = actions.form;
+  const flow = { active: false, queue: [], idx: 0, fails: 0, quiet: 0, rec: null, micBlocked: false };
+  // Commands are short ("skip", "go back"); a long answer that happens to contain "next" is still an answer.
+  const said = (text, words) => text.split(/\s+/).length <= 4 && words.some((w) => text.includes(w));
+
+  function readBack(key, value) {
+    if (key === "pan") return String(value).split("").join(" ");
+    if (key === "mobile") return String(value).replace(/^(\d{5})(\d{5})$/, "$1 $2");
+    if (key === "requested_amount") return `₹${Number(value).toLocaleString("en-IN")}`;
+    if (key === "tenure_months") return `${value} ${FORM_TEXT[g.lang].months}`;
+    return String(value);
+  }
+
+  function formButtons() {
+    if (!form?.open()) return [];
+    const button = el("button", flow.active ? "ghost" : "stamp", flow.active ? FORM_TEXT[g.lang].stop : FORM_TEXT[g.lang].fill);
+    button.type = "button";
+    button.addEventListener("click", () => (flow.active ? endForm(true) : startForm()));
+    return [button];
+  }
+  function renderFormButtons() {
+    actionRow.querySelectorAll(".form-flow-btn").forEach((b) => b.remove());
+    formButtons().forEach((b) => { b.classList.add("form-flow-btn"); actionRow.appendChild(b); });
+  }
+
+  async function startForm() {
+    if (!form?.open()) { await say(FORM_TEXT[g.lang].notHere); return; }
+    setConvo(false); // the interview does its own listening
+    Object.assign(flow, { active: true, idx: 0, fails: 0, quiet: 0, queue: FORM_ORDER.filter((k) => form.isEmpty(k)) });
+    renderFormButtons();
+    if (!flow.queue.length) { await say(FORM_TEXT[g.lang].allFilled); return endForm(); }
+    askField(FORM_TEXT[g.lang].start);
+  }
+
+  async function askField(prefix = "") {
+    if (!flow.active) return;
+    if (flow.idx >= flow.queue.length) { await say(prefix); return endForm(); }
+    const key = flow.queue[flow.idx];
+    form.focus(key);
+    await say(`${prefix} ${FORM_Q[g.lang][key]}`.trim());
+    if (!flow.active) return;
+    const heard = await listenOnce();
+    if (heard && flow.active) handleFormAnswer(heard);
+  }
+
+  // One answer from the microphone, or null (no mic, silence, or an error): then a typed answer is awaited.
+  function listenOnce() {
+    return new Promise((resolve) => {
+      if (!Recognition || flow.micBlocked) { resolve(null); return; }
+      const rec = new Recognition();
+      flow.rec = rec;
+      rec.lang = SPEECH_LANG[g.lang];
+      rec.interimResults = true;
+      rec.continuous = false;
+      let heard = "";
+      rec.onresult = (event) => {
+        heard = Array.from(event.results).map((r) => r[0].transcript).join(" ").trim();
+        captionNow.textContent = `${UI[g.lang].you}: ${heard}`;
+      };
+      rec.onerror = (event) => {
+        if (["not-allowed", "service-not-allowed", "audio-capture"].includes(event.error)) {
+          flow.micBlocked = true;
+          note.textContent = FORM_TEXT[g.lang].typeInstead;
+        }
+      };
+      rec.onend = () => {
+        flow.rec = null;
+        setListening(false);
+        if (!heard && flow.active && !flow.micBlocked && flow.quiet < 2) {
+          flow.quiet += 1; // nobody spoke: listen again a couple of times before waiting for typing
+          listenOnce().then(resolve);
+          return;
+        }
+        flow.quiet = 0;
+        resolve(heard || null);
+      };
+      try { rec.start(); setListening(true); } catch { flow.rec = null; resolve(null); }
+    });
+  }
+
+  async function handleFormAnswer(text) {
+    if (!flow.active) return;
+    if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+    addTranscript("me", text);
+    input.value = "";
+    const t = text.toLowerCase().trim();
+    const key = flow.queue[flow.idx];
+    const W = FORM_WORDS;
+    if (said(t, W.stop)) return endForm(true);
+    if (said(t, W.skip)) { flow.idx += 1; flow.fails = 0; return askField(); }
+    if (said(t, W.back)) {
+      if (flow.idx > 0) { flow.idx -= 1; form.clear(flow.queue[flow.idx]); }
+      flow.fails = 0;
+      return askField();
+    }
+    if (said(t, W.repeat)) return askField();
+    let value = null;
+    try {
+      const body = await api("/api/form/voice", { method: "POST", body: JSON.stringify({ transcript: text, field: key }) });
+      value = body.fields?.[key] ?? null;
+    } catch { value = null; }
+    if (value !== null && form.set(key, value)) {
+      flow.idx += 1;
+      flow.fails = 0;
+      return askField(FORM_TEXT[g.lang].gotIt.replace("{value}", readBack(key, value)));
+    }
+    flow.fails += 1;
+    if (flow.fails >= 2) { flow.idx += 1; flow.fails = 0; return askField(FORM_TEXT[g.lang].leaveIt); }
+    return askField(FORM_TEXT[g.lang].notCaught);
+  }
+
+  async function endForm(stopped = false) {
+    if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+    const wasActive = flow.active;
+    flow.active = false;
+    renderFormButtons();
+    if (!wasActive && stopped) return;
+    await say(stopped ? FORM_TEXT[g.lang].stopped : FORM_TEXT[g.lang].done);
+    if (!stopped) form.finish();
   }
 
   async function ask(message = "") {
+    // During the form interview every message is an answer (or a command) for the current field.
+    if (flow.active && message) { handleFormAnswer(message); return; }
+    if (!flow.active && message && form?.open() && FORM_WORDS.start.some((w) => message.toLowerCase().includes(w))) {
+      addTranscript("me", message);
+      input.value = "";
+      startForm();
+      return;
+    }
     if (g.busy) return;
     g.busy = true;
     stopSpeaking();
@@ -705,6 +946,62 @@ export function createGuide({ api, context, actions }) {
     if (stage.dataset.mood === "thinking") setMood("idle");
     await say(reply.reply);
     if (g.convo && g.open) listen();
+  }
+
+  /* ---------------------------------------------------------------- suggested questions, by tag */
+
+  const questions = { groups: null, tag: null, key: null, tags: "" };
+  async function loadQuestions() {
+    const { caseId } = context();
+    const key = `${g.lang}:${caseId || ""}:${g.lastKey || ""}`;
+    if (questions.key === key) return;
+    questions.key = key;
+    try {
+      const params = new URLSearchParams({ language: g.lang, ...(caseId ? { case_id: caseId } : {}) });
+      questions.groups = (await api(`/api/guide/questions?${params}`)).groups;
+    } catch {
+      questions.groups = null;
+    }
+    // When new tags appear (the statement was read, a decision arrived), lead with them: that is what the
+    // customer can now ask about. Otherwise keep the tag they picked.
+    const tags = (questions.groups || []).map((group) => group.tag);
+    if (tags.join() !== questions.tags) {
+      questions.tags = tags.join();
+      questions.tag = ["decision", "income", "next"].find((tag) => tags.includes(tag)) || tags[0] || null;
+    }
+    renderQuestions();
+  }
+  function questionButton(text, className) {
+    const button = el("button", className, text);
+    button.type = "button";
+    button.addEventListener("click", () => { more.open = false; ask(text); });
+    return button;
+  }
+  function renderQuestions() {
+    const groups = questions.groups;
+    if (!groups?.length) {
+      topics.replaceChildren();
+      more.classList.add("hidden");
+      chips.replaceChildren(...UI[g.lang].chips.map((q) => questionButton(q)));
+      return;
+    }
+    topics.replaceChildren(el("span", "small muted", UI[g.lang].topics), ...groups.map((group) => {
+      const pill = el("button", "guide-topic", group.label);
+      pill.type = "button";
+      pill.setAttribute("role", "tab");
+      pill.setAttribute("aria-selected", String(group.tag === questions.tag));
+      pill.addEventListener("click", () => { questions.tag = group.tag; renderQuestions(); });
+      return pill;
+    }));
+    const current = groups.find((group) => group.tag === questions.tag) || groups[0];
+    chips.replaceChildren(...current.questions.filter((q) => q.featured).map((q) => questionButton(q.text)));
+    more.classList.remove("hidden");
+    moreList.replaceChildren(...groups.map((group) => {
+      const section = el("div", "guide-more-group");
+      section.appendChild(el("b", "small", group.label));
+      group.questions.forEach((q) => section.appendChild(questionButton(q.text, "guide-more-q")));
+      return section;
+    }));
   }
 
   // Greet again only when the customer's step actually changes, not on every repaint.
@@ -727,6 +1024,7 @@ export function createGuide({ api, context, actions }) {
       try { key = `${caseId}:${(await api(`/api/cases/${caseId}/journey`)).step}`; } catch { return; }
     }
     if (key !== g.lastKey) { g.lastKey = key; ask(""); }
+    loadQuestions();
   }
 
   /* ---------------------------------------------------------------- window states */
@@ -747,6 +1045,7 @@ export function createGuide({ api, context, actions }) {
     launcher.classList.add("hidden");
     startLife();
     g.lastKey = null;
+    loadQuestions(); // the questions do not need to wait for the presenter
     // Connect the photoreal presenter first (when configured), so the greeting comes from one voice.
     Promise.resolve(startAvatar()).finally(refresh);
   }
@@ -796,11 +1095,9 @@ export function createGuide({ api, context, actions }) {
     captionBar.classList.toggle("hidden", !g.captions);
     call.classList.toggle("expanded", g.expanded);
     langPick.value = g.lang;
-    chips.replaceChildren(...t.chips.map((q) => {
-      const chip = el("button", null, q);
-      chip.addEventListener("click", () => ask(q));
-      return chip;
-    }));
+    moreSummary.textContent = t.more;
+    moreHint.textContent = t.moreHint;
+    renderQuestions();
     fillVoicePicker();
   }
 
@@ -849,7 +1146,15 @@ export function createGuide({ api, context, actions }) {
       relabel();
       launcher.classList.toggle("hidden", !g.user || (g.open && !g.minimised));
     },
-    onView() { refresh(); },
+    onView() {
+      // Leaving the form (or saving it) ends the interview quietly.
+      if (flow.active && !form?.open()) {
+        flow.active = false;
+        if (flow.rec) { try { flow.rec.abort(); } catch { /* stopped */ } }
+      }
+      refresh();
+      renderFormButtons();
+    },
     onUploadError(message) {
       if (!g.open) return;
       // Known problems get the guide's fuller help; anything else is read out as the server wrote it.

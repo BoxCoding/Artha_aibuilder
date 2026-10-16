@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     model_lite: str = "gemini-3.5-flash-lite"
     llm_timeout_seconds: float = 90.0
     token_budget_per_case: int = 400_000
+    # Where the model is used. The question parser turns questions the keyword parser cannot read into a
+    # structured query (the engine still computes every figure); rephrasing rewords computed answers; the
+    # pipeline uses the model for the memo, visual checks, scans and leftover categories. Each adds latency.
+    ai_question_parser: bool = True
+    ai_question_parser_timeout_seconds: float = 8.0
+    ai_rephrase: bool = False
+    pipeline_ai: bool = True
 
     # HeyGen LiveAvatar: a photoreal face for the video guide. Off unless a key is set. Sandbox mode
     # costs no credits but offers one avatar and ~1-minute sessions; turn it off to use your own.

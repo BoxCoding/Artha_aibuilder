@@ -27,7 +27,7 @@ from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
                               enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
 from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
-                           CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
+                           AskRequest, CreateUserRequest, VoiceFormRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
                            case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
@@ -546,6 +546,41 @@ async def coach(case_id: str, payload: CoachRequest,
     return {"reply": draft.reply, "offer_callback": draft.offer_callback, "author": author}
 
 
+@app.post("/api/cases/{case_id}/ask")
+async def ask_statement(case_id: str, payload: AskRequest,
+                        principal: Principal = Depends(limiter(30, 60))) -> dict[str, Any]:
+    """Answer a customer's question about their own statement, citing the rows used. Borrower-safe:
+    computed from transactions only, never from scores, findings or the decision."""
+    from app.ai import statement_qa
+
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    case = get_store().get(case_id)
+    authorise_case(case, principal)
+    if not case.transactions:
+        raise HTTPException(status.HTTP_409_CONFLICT, "You can ask about your statement once it has been read.")
+    settings = get_settings()
+    language = payload.language if payload.language in settings.supported_languages else case.language
+    result = await statement_qa.answer(case, payload.question, language, get_gateway(),
+                                       UsageMeter(budget=settings.token_budget_per_case))
+    get_store().audit(principal.uid, principal.role.value, "STATEMENT_QUESTION", case_id,
+                      {"author": result["author"], "understood": result["understood"]})
+    return result
+
+
+@app.post("/api/form/voice")
+async def form_voice(payload: VoiceFormRequest, principal: Principal = Depends(limiter(60, 60))) -> dict[str, Any]:
+    """Turn what the customer said into form fields, for them to check before saving. Extracted by code, never by a
+    language model, and neither the transcript nor the values are logged or stored."""
+    from app.forms.voice_fill import FIELD_EXTRACTORS, extract
+
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    if payload.field is not None and payload.field not in FIELD_EXTRACTORS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown field.")
+    return extract(payload.transcript, payload.field)
+
+
 @app.get("/api/cases/{case_id}/journey")
 async def journey_state(case_id: str,
                         principal: Principal = Depends(require_roles(Role.BORROWER, Role.LOAN_OFFICER))) -> dict[str, Any]:
@@ -553,6 +588,21 @@ async def journey_state(case_id: str,
     case = get_store().get(case_id)
     authorise_case(case, principal)
     return journey(case, get_settings().max_documents_per_case)
+
+
+@app.get("/api/guide/questions")
+async def guide_questions(language: str = "en", case_id: str | None = None,
+                          principal: Principal = Depends(current_principal)) -> dict[str, Any]:
+    """Questions the video guide can answer for this application, grouped by tag."""
+    from app.ai.question_bank import suggestions
+
+    if principal.role not in (Role.BORROWER, Role.LOAN_OFFICER):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot perform this action.")
+    case = None
+    if case_id:
+        case = get_store().get(case_id)
+        authorise_case(case, principal)
+    return {"groups": suggestions(case, language)}
 
 
 @app.post("/api/guide")
@@ -572,7 +622,10 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
                                UsageMeter(budget=settings.token_budget_per_case))
     if payload.message.strip():
         get_store().audit(principal.uid, principal.role.value, "GUIDE_MESSAGE", case.case_id if case else "no-case",
-                          {"author": result["author"], "step": result["step"]})
+                          {"author": result["author"], "step": result["step"], "kind": result.get("kind")})
+        # Which route answered (never the message), so "it did not understand me" can be traced in the logs.
+        log.info("guide_answer", extra={"detail": f"kind={result.get('kind')} step={result['step']} "
+                                                  f"author={result['author']} language={language}"})
     return result
 
 
@@ -657,6 +710,15 @@ async def evidence_crop(case_id: str, evidence_id: str,
     data = await asyncio.to_thread(store.get_file, case_id, evidence.doc_id)
     png = await asyncio.to_thread(render_crop, data, evidence.page, evidence.bbox)
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
+
+
+@app.get("/api/copilot/questions")
+async def copilot_questions(
+        principal: Principal = Depends(require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> dict[str, Any]:
+    """Questions the co-pilot answers, grouped by tag, for the officer's question panel."""
+    from app.ai.copilot_questions import suggestions
+
+    return {"groups": suggestions()}
 
 
 @app.post("/api/cases/{case_id}/copilot")
