@@ -135,12 +135,12 @@ HELP_TEXT: dict[str, dict[str, str]] = {
         "id": "Tentu. Ketuk Minta ditelepon dan petugas pinjaman akan menelepon Anda dalam dua hari kerja.",
     },
     "identity": {
-        "en": "I'm Saarthi, an AI assistant that guides you through your loan application and answers questions about "
+        "en": "I'm {name}, an AI assistant that guides you through your loan application and answers questions about "
               "your statement. I'm not a person: a loan officer decides every application, and you can ask for a call "
               "back at any time.",
-        "hi": "मैं सारथी हूँ, एक AI सहायक जो आपके लोन आवेदन में मदद करता है और आपके स्टेटमेंट के बारे में सवालों के जवाब देता है। "
+        "hi": "मैं {name} हूँ, एक AI सहायक जो आपके लोन आवेदन में मदद करता है और आपके स्टेटमेंट के बारे में सवालों के जवाब देता है। "
               "मैं कोई व्यक्ति नहीं हूँ: हर आवेदन का फ़ैसला लोन अधिकारी करते हैं, और आप कभी भी कॉल बैक माँग सकते हैं।",
-        "id": "Saya Saarthi, asisten AI yang memandu pengajuan pinjaman Anda dan menjawab pertanyaan tentang rekening "
+        "id": "Saya {name}, asisten AI yang memandu pengajuan pinjaman Anda dan menjawab pertanyaan tentang rekening "
               "koran Anda. Saya bukan manusia: setiap pengajuan diputuskan oleh petugas pinjaman, dan Anda bisa meminta "
               "ditelepon kapan saja.",
     },
@@ -168,12 +168,12 @@ HELP_TEXT: dict[str, dict[str, str]] = {
         "id": " (atau klik Fill demo customer)",
     },
     "unclear": {
-        "en": "Sorry, I didn't catch that. You can ask me about your application, for example \"What do I do next?\", "
-              "or about your statement, for example \"Where does my money go?\" or \"Which month had the lowest income?\"",
-        "hi": "माफ़ कीजिए, मैं समझ नहीं पाया। आप अपने आवेदन के बारे में पूछ सकते हैं, जैसे \"अब मुझे क्या करना है?\", या अपने "
-              "स्टेटमेंट के बारे में, जैसे \"मेरा पैसा कहाँ जाता है?\" या \"किस महीने आमदनी सबसे कम रही?\"",
-        "id": "Maaf, saya kurang menangkap maksud Anda. Anda bisa bertanya tentang pengajuan, misalnya \"Apa yang harus saya "
-              "lakukan?\", atau tentang rekening koran, misalnya \"Ke mana uang saya pergi?\" atau \"Bulan apa pendapatan terendah?\"",
+        "en": "I can only help with your loan application and your bank statement. You can ask, for example, "
+              "\"What do I do next?\", \"Where does my money go?\" or \"Which month had the lowest income?\"",
+        "hi": "मैं सिर्फ़ आपके लोन आवेदन और बैंक स्टेटमेंट में मदद कर सकता हूँ। आप पूछ सकते हैं, जैसे \"अब मुझे क्या करना है?\", "
+              "\"मेरा पैसा कहाँ जाता है?\" या \"किस महीने आमदनी सबसे कम रही?\"",
+        "id": "Saya hanya bisa membantu soal pengajuan pinjaman dan rekening koran Anda. Anda bisa bertanya, misalnya "
+              "\"Apa yang harus saya lakukan?\", \"Ke mana uang saya pergi?\" atau \"Bulan apa pendapatan terendah?\"",
     },
     "callback_later": {
         "en": "Of course. Once you have started your application, you can ask for a call back and a loan officer "
@@ -189,7 +189,112 @@ ACTION_LABELS: dict[str, dict[str, str]] = {
     "submit": {"en": "Submit for assessment", "hi": "आकलन के लिए जमा करें", "id": "Kirim untuk penilaian"},
     "view_decision": {"en": "See the decision", "hi": "फ़ैसला देखें", "id": "Lihat keputusan"},
     "callback": {"en": "Ask for a call back", "hi": "कॉल बैक का अनुरोध करें", "id": "Minta ditelepon"},
+    "new_application": {"en": "Start a new application", "hi": "नया आवेदन शुरू करें", "id": "Mulai pengajuan baru"},
 }
+
+# A new application, one field at a time. The page says which required field is still empty (or
+# "consent" / "save" when only those are left), and the guide speaks the line for it.
+FIELD_TEXT: dict[str, dict[str, str]] = {
+    "full_name": {
+        "en": "Let's start with your full name, exactly as it is printed on your PAN card.",
+        "hi": "शुरुआत अपने पूरे नाम से करें, ठीक वैसा जैसा आपके PAN कार्ड पर छपा है।",
+        "id": "Mari mulai dengan nama lengkap Anda, persis seperti tercetak di kartu PAN.",
+    },
+    "mobile": {
+        "en": "Next, your ten-digit mobile number. A loan officer may call you on it.",
+        "hi": "अब अपना दस अंकों का मोबाइल नंबर लिखें। लोन अधिकारी आपको इसी पर कॉल कर सकते हैं।",
+        "id": "Berikutnya, nomor ponsel sepuluh digit Anda. Petugas pinjaman mungkin menelepon ke nomor ini.",
+    },
+    "pan": {
+        "en": "Now your PAN. It has ten characters: five letters, four numbers, then one letter, as on your PAN card.",
+        "hi": "अब अपना PAN लिखें। इसमें दस अक्षर होते हैं: पाँच अंग्रेज़ी अक्षर, चार अंक, फिर एक अक्षर, जैसा कार्ड पर है।",
+        "id": "Sekarang PAN Anda. Ada sepuluh karakter: lima huruf, empat angka, lalu satu huruf, seperti di kartu PAN.",
+    },
+    "business_name": {
+        "en": "Good. Now your business: write its name, then choose how it is registered and what it does.",
+        "hi": "बढ़िया। अब अपने व्यवसाय का नाम लिखें, फिर चुनें कि वह किस रूप में पंजीकृत है और क्या काम करता है।",
+        "id": "Bagus. Sekarang usaha Anda: tulis namanya, lalu pilih bentuk usaha dan bidangnya.",
+    },
+    "address_line": {
+        "en": "Next, the business address: the shop or office number and the street.",
+        "hi": "अब व्यवसाय का पता लिखें: दुकान या ऑफ़िस नंबर और गली या सड़क।",
+        "id": "Berikutnya, alamat usaha: nomor toko atau kantor dan nama jalan.",
+    },
+    "city": {
+        "en": "Now the city where your business runs.",
+        "hi": "अब वह शहर लिखें जहाँ आपका व्यवसाय चलता है।",
+        "id": "Sekarang kota tempat usaha Anda berjalan.",
+    },
+    "pincode": {
+        "en": "Choose your state, then type the six-digit PIN code.",
+        "hi": "अपना राज्य चुनें, फिर छह अंकों का पिन कोड लिखें।",
+        "id": "Pilih negara bagian, lalu ketik kode PIN enam digit.",
+    },
+    "consent": {
+        "en": "Almost done. Check the loan amount and how many months you want to repay, then read and tick the consent box.",
+        "hi": "बस थोड़ा और। लोन की राशि और चुकाने के महीने देख लें, फिर सहमति वाला बॉक्स पढ़कर उस पर टिक करें।",
+        "id": "Hampir selesai. Periksa jumlah pinjaman dan lama cicilan, lalu baca dan centang kotak persetujuan.",
+    },
+    "save": {
+        "en": "Everything is filled in. Press Save and continue to bank statements.",
+        "hi": "सब भर गया है। अब 'सेव करें और बैंक स्टेटमेंट पर आगे बढ़ें' दबाएँ।",
+        "id": "Semua sudah terisi. Tekan Simpan dan lanjutkan ke rekening koran.",
+    },
+}
+FIELDS = tuple(FIELD_TEXT)
+
+GREETING: dict[str, str] = {
+    "en": "Hello, I'm your application guide. I'll take you through it one step at a time.",
+    "hi": "नमस्ते, मैं आपका आवेदन गाइड हूँ। मैं आपको एक-एक कदम करके आगे ले चलूँगा।",
+    "id": "Halo, saya pemandu pengajuan Anda. Saya akan memandu Anda langkah demi langkah.",
+}
+
+# "My applications": a spoken summary of the person's own cases, in plain words.
+LIST_STATUS: dict[str, dict[str, str]] = {
+    "draft": {"en": "not submitted yet", "hi": "अभी जमा नहीं हुआ", "id": "belum dikirim"},
+    "processing": {"en": "being read now", "hi": "अभी पढ़ा जा रहा है", "id": "sedang dibaca"},
+    "attention": {"en": "needs your attention", "hi": "आपका ध्यान चाहिए", "id": "perlu perhatian Anda"},
+    "review": {"en": "with a loan officer", "hi": "लोन अधिकारी के पास है", "id": "ada di petugas pinjaman"},
+    "decided": {"en": "decision ready", "hi": "फ़ैसला आ गया है", "id": "keputusan sudah ada"},
+}
+LIST_TEXT: dict[str, dict[str, str]] = {
+    "none": {
+        "en": "You have no applications yet. Press New application and I'll guide you step by step.",
+        "hi": "अभी आपका कोई आवेदन नहीं है। 'नया आवेदन' दबाएँ, मैं आपको एक-एक कदम करके बताऊँगा।",
+        "id": "Anda belum punya pengajuan. Tekan Pengajuan baru dan saya akan memandu langkah demi langkah.",
+    },
+    "count": {
+        "en": "You have {n} applications.", "hi": "आपके {n} आवेदन हैं।", "id": "Anda punya {n} pengajuan.",
+    },
+    "one": {
+        "en": "You have one application.", "hi": "आपका एक आवेदन है।", "id": "Anda punya satu pengajuan.",
+    },
+    "close": {
+        "en": "Open one and I'll tell you what to do next, or start a new application.",
+        "hi": "किसी एक को खोलें, मैं बताऊँगा कि आगे क्या करना है, या नया आवेदन शुरू करें।",
+        "id": "Buka salah satu dan saya akan memberi tahu langkah berikutnya, atau mulai pengajuan baru.",
+    },
+}
+_LIST_GROUP = {"DRAFT": "draft", "PROCESSING": "processing", "NEEDS_MANUAL_PROCESSING": "attention",
+               "READY_FOR_REVIEW": "review", "PENDING_SECOND_APPROVAL": "review"}
+
+# The presenter on screen introduces themself by name.
+PRESENTER_NAMES = {"female": {"en": "Sahayika", "hi": "सहायिका", "id": "Sahayika"},
+                   "male": {"en": "Saarthi", "hi": "सारथी", "id": "Saarthi"}}
+
+# Hindi first person is gendered. The guide's Hindi lines are written in the masculine; a female
+# presenter speaks the same lines in the feminine.
+_HI_FEMININE = (("सकता हूँ", "सकती हूँ"), ("समझता हूँ", "समझती हूँ"), ("पूछूँगा", "पूछूँगी"), ("बताऊँगा", "बताऊँगी"),
+                ("चलूँगा", "चलूँगी"), ("करूँगा", "करूँगी"), ("रहा हूँ", "रही हूँ"),
+                ("मदद करता है", "मदद करती है"), ("जवाब देता है", "जवाब देती है"), ("पाया।", "पाई।"))
+
+
+def in_voice(text: str, lang: str, presenter: str) -> str:
+    if lang == "hi" and presenter == "female":
+        for male, female in _HI_FEMININE:
+            text = text.replace(male, female)
+    return text
+
 
 KEYWORDS: dict[str, tuple[str, ...]] = {
     "identity": ("your name", "ur name", "who are you", "who r u", "are you a bot", "are you a robot", "are you human",
@@ -256,7 +361,8 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
     is what the question bank's tests check, so every suggested question provably gets the intended answer.
     """
     if not message.strip():
-        return _step_text(state, lang), "step", False
+        text = _step_text(state, lang)
+        return (f"{GREETING[lang]} {text}" if state.get("greet") and state.get("field") else text), "step", False
     if detect(message):
         return SAFE_REDIRECT[lang], "redirect", False
     intent = intent_of(message)
@@ -268,7 +374,8 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
                 "profile:name", False
         return HELP_TEXT["my_name_unknown"][lang], "profile:name", False
     if intent == "identity":
-        return HELP_TEXT["identity"][lang], "identity", False
+        names = PRESENTER_NAMES[state.get("presenter", "male")]
+        return HELP_TEXT["identity"][lang].format(name=names.get(lang, names["en"])), "identity", False
     if intent == "distress":
         # Drop the help text's opening "Of course." so it follows the empathy line naturally.
         offer = re.split(r"(?<=[.।])\s", HELP_TEXT["callback" if has_case else "callback_later"][lang], maxsplit=1)[-1]
@@ -325,6 +432,10 @@ def _has_any(text: str, words: tuple[str, ...]) -> bool:
 
 
 def _step_text(state: dict[str, Any], lang: str) -> str:
+    if state["step"] == "list":
+        return list_text(state.get("cases", []), lang)
+    if state["step"] == "details" and state.get("field") in FIELD_TEXT:
+        return FIELD_TEXT[state["field"]][lang]
     text = STEP_TEXT[state["step"]][lang].format(documents=state.get("documents", 0),
                                                  max_documents=state.get("max_documents", 3))
     if state.get("attention"):
@@ -332,11 +443,40 @@ def _step_text(state: dict[str, Any], lang: str) -> str:
     return text
 
 
+def list_text(rows: list[dict[str, Any]], lang: str) -> str:
+    """A spoken summary of the person's own applications, newest first (at most five are read out)."""
+    if not rows:
+        return LIST_TEXT["none"][lang]
+    parts = [LIST_TEXT["one"][lang] if len(rows) == 1 else LIST_TEXT["count"][lang].format(n=len(rows))]
+    for row in rows[:5]:
+        group = _LIST_GROUP.get(row.get("status", ""), "decided")
+        parts.append(f"{row.get('business_name') or '-'}: {LIST_STATUS[group][lang]}.")
+    parts.append(LIST_TEXT["close"][lang])
+    return " ".join(parts)
+
+
+def mood_of(state: dict[str, Any], message: str, kind: str) -> str:
+    """How the presenter's face should look while saying the reply. Expression only, never content."""
+    if kind == "help:distress" or (kind == "decision" and state.get("outcome") == "declined"):
+        return "empathetic"
+    if kind in ("unclear", "redirect", "help:private"):
+        return "polite"
+    if not message.strip():
+        if state["step"] in ("accept_terms", "done") or state.get("field") == "save":
+            return "happy"
+        if state.get("outcome") == "declined":
+            return "empathetic"
+        if state.get("greet"):
+            return "happy"
+    return "warm"
+
+
 async def guide_reply(state: dict[str, Any], message: str, language: str, case: Case | None,
-                      gateway: LLMGateway, meter: UsageMeter) -> dict[str, Any]:
+                      gateway: LLMGateway, meter: UsageMeter, presenter: str = "female") -> dict[str, Any]:
     from app.config import get_settings
 
     lang = _lang(language)
+    state = state | {"presenter": presenter}
     reply, kind, callback = route(state, message, lang, case)
     author = "templates"
     if case is not None and case.transactions and (
@@ -344,10 +484,12 @@ async def guide_reply(state: dict[str, Any], message: str, language: str, case: 
         result = await statement_qa.answer_with_ai(case, message, lang, gateway, meter, spoken=True)
         if result.understood and result.action:
             reply, kind, author = result.text, f"statement:{result.action}", result.author
-    # A model only rephrases free questions; greetings, safety cases and injections stay scripted.
+    # A model only rephrases free questions about the application; greetings, safety cases, injections
+    # and anything off topic stay scripted.
     if (get_settings().ai_rephrase and gateway.enabled and message.strip() and not detect(message)
             and kind in ("step", "help:documents", "help:time")):
-        facts = {"language": lang, "journey": state, "approved_answer": reply, "user_message": message[:500]}
+        facts = {"language": lang, "journey": {k: v for k, v in state.items() if k not in ("cases", "greet", "presenter")},
+                 "approved_answer": reply, "user_message": message[:500]}
         try:
             draft = await gateway.structured(prompt_id="journey_guide", schema=CoachDraft, meter=meter,
                                              contents=[json.dumps(facts, ensure_ascii=False)])
@@ -355,8 +497,13 @@ async def guide_reply(state: dict[str, Any], message: str, language: str, case: 
                 reply, callback, author = draft.reply, callback or draft.offer_callback, gateway.provider
         except LLMUnavailable:
             pass
-    return {"reply": reply, "kind": kind, "step": state["step"], "journey": state, "offer_callback": callback,
-            "actions": _actions(state, lang, callback and case is not None), "author": author}
+    actions = _actions(state, lang, callback and case is not None)
+    if state["step"] == "list":
+        actions = [{"id": "new_application", "label": ACTION_LABELS["new_application"][lang]}]
+    public_state = {k: v for k, v in state.items() if k not in ("cases", "greet", "presenter")}
+    return {"reply": in_voice(reply, lang, presenter), "kind": kind, "step": state["step"], "journey": public_state,
+            "offer_callback": callback, "actions": actions, "author": author, "mood": mood_of(state, message, kind),
+            "field": state.get("field")}
 
 
 def _safe(reply: str, source: str) -> bool:

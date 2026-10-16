@@ -3,20 +3,35 @@
    - Voice: the browser's speech synthesis, with the most natural installed voice chosen per language
      (Premium / Enhanced / Natural / Google voices first, novelty voices never), spoken sentence by
      sentence so long replies are not cut off, with rupee amounts and acronyms rewritten for speech.
-   - Face: an illustrated presenter drawn in SVG. Lips follow the words (a viseme timeline built from
-     the text and re-synchronised on every word boundary the voice reports); eyes blink and glance;
-     the head sways while idle and tilts while listening.
+   - Face: one of two photo presenters, Sahayika and Sahayak, brought to life in the browser by
+     face.js: the mouth opens and closes with the words, the eyes blink and glance, the head nods and
+     sways, and the expression follows the conversation (warm, happy, concerned, listening, thinking).
+     The guide shows the presenter of the other gender from the signed-in person's self-declared
+     profile (female if not stated), and the person can switch at any time. The voice is matched to
+     the presenter. Without WebGL the still photo is shown with a speaking ring.
+   - Scope: it talks only about the person's own applications. On a new application it walks them
+     through the form one field at a time and highlights the field to fill next.
    - Conversation: hands-free turn-taking with speech recognition where the browser has it. Tap the
      presenter to interrupt. Camera and microphone are previews only: no frame or sound leaves the
      device, only the recognised text of a question is sent.
    - Every word it says comes from POST /api/guide. Its buttons only take the customer where they need
      to go; it never presses submit or accept on their behalf. */
 
+let createFace = null;
+try { ({ createFace } = await import(`./face.js${new URL(import.meta.url).search}`)); } catch { /* still photo */ }
+
 const SPEECH_LANG = { en: "en-IN", hi: "hi-IN", id: "id-ID" };
 const VOICE_FALLBACKS = { en: ["en-IN", "en-GB", "en-AU", "en-US"], hi: ["hi-IN"], id: ["id-ID"] };
 // macOS ships these as joke or effect voices; they must never be picked automatically.
 const NOVELTY = /\b(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|fred|junior|ralph|kathy|grandma|grandpa|rocko|shelley|eddy|flo|reed|sandy)\b/i;
-const NAME = "Saarthi";
+// The two presenters: portrait photos served from /static/guide/.
+const PRESENTERS = {
+  female: { name: "Sahayika", hi: "सहायिका", src: "/static/guide/presenter-female.webp" },
+  male: { name: "Saarthi", hi: "सारथी", src: "/static/guide/presenter-male.webp" },
+};
+// Installed voices whose names say which voice they are. Unknown voices score neutral.
+const FEMALE_VOICES = /\b(female|woman|samantha|karen|moira|tessa|victoria|veena|lekha|kalpana|swara|heera|neerja|aditi|raveena|kajal|ananya|sangeeta|priya|isha|zira|susan|hazel|serena|fiona|damayanti|gadis|kiara|google हिन्दी|google bahasa)\b/i;
+const MALE_VOICES = /\b(male|man|rishi|ravi|hemant|madhur|prabhat|aarav|kunal|daniel|alex|oliver|arthur|aaron|gordon|david|mark|george|guy|ardi|thomas|tom|lee)\b/i;
 
 // The form interview: Saarthi asks for each empty field in turn.
 const FORM_ORDER = ["full_name", "mobile", "pan", "business_name", "industry", "business_start_year", "address_line",
@@ -82,42 +97,39 @@ const FORM_WORDS = {
 };
 
 const UI = {
-  en: { role: "Your application guide", start: "Video call with Saarthi", onCall: "On call · tap to open",
+  en: { role: "Your application guide", start: "Video call with {name}", onCall: "On call · tap to open",
         placeholder: "Type a question", send: "Ask", step: "Step", of: "of", listening: "Listening…", thinking: "Thinking…",
         you: "You", mic: "Talk hands-free", micOff: "Stop listening", cam: "Camera", cc: "Captions", mute: "Mute voice",
         unmute: "Unmute voice", end: "End call", expand: "Larger", shrink: "Smaller", minimise: "Minimise",
-        voice: "Voice", auto: "Best available", camNote: "Your camera is shown only to you.", interrupt: "Tap me to interrupt",
+        voice: "Voice", auto: "Best available", switchTo: "Switch presenter", camNote: "Your camera is shown only to you.", interrupt: "Tap me to interrupt",
         aiBadge: "AI presenter", connecting: "Connecting the video presenter…", sound: "🔊 Tap to turn on sound",
         avatarSilent: "The video presenter didn't respond, so I answered with this device's voice.",
         topics: "Ask about", more: "More questions", moreHint: "Everything I can answer for your application right now",
         avatarEnded: "The video presenter has ended. I'll carry on from here.",
         noMic: "The microphone is blocked here. You can type your questions instead.",
         noCam: "The camera could not be opened here. Talking and typing still work.",
-        list: "Here are your applications. Open one and I'll tell you where it stands, or start a new application.",
         chips: ["What do I do next?", "Which documents do you need?", "My statement has a password", "How long will it take?", "I want to talk to a person"] },
-  hi: { role: "आपका आवेदन गाइड", start: "सारथी से वीडियो कॉल", onCall: "कॉल पर · खोलने के लिए दबाएँ",
+  hi: { role: "आपका आवेदन गाइड", start: "{name} से वीडियो कॉल", onCall: "कॉल पर · खोलने के लिए दबाएँ",
         placeholder: "अपना सवाल लिखें", send: "पूछें", step: "चरण", of: "में से", listening: "सुन रहा हूँ…", thinking: "सोच रहा हूँ…",
         you: "आप", mic: "बिना हाथ लगाए बात करें", micOff: "सुनना बंद करें", cam: "कैमरा", cc: "कैप्शन", mute: "आवाज़ बंद",
         unmute: "आवाज़ चालू", end: "कॉल समाप्त", expand: "बड़ा करें", shrink: "छोटा करें", minimise: "छोटा करके रखें",
-        voice: "आवाज़", auto: "सबसे अच्छी उपलब्ध", aiBadge: "AI प्रस्तुतकर्ता", sound: "🔊 आवाज़ चालू करने के लिए दबाएँ",
+        voice: "आवाज़", auto: "सबसे अच्छी उपलब्ध", switchTo: "प्रस्तुतकर्ता बदलें", aiBadge: "AI प्रस्तुतकर्ता", sound: "🔊 आवाज़ चालू करने के लिए दबाएँ",
         avatarSilent: "वीडियो प्रस्तुतकर्ता ने जवाब नहीं दिया, इसलिए मैंने इस डिवाइस की आवाज़ में जवाब दिया।",
         topics: "किस बारे में पूछें", more: "और सवाल", moreHint: "आपके आवेदन के लिए अभी मैं इन सबका जवाब दे सकता हूँ",
         connecting: "वीडियो प्रस्तुतकर्ता जुड़ रहा है…", avatarEnded: "वीडियो प्रस्तुतकर्ता का सत्र खत्म हो गया। मैं यहीं से आगे मदद करूँगा।", camNote: "आपका कैमरा सिर्फ़ आपको दिखता है।", interrupt: "रोकने के लिए मुझे दबाएँ",
         noMic: "यहाँ माइक्रोफ़ोन बंद है। आप अपना सवाल लिख सकते हैं।",
         noCam: "यहाँ कैमरा नहीं खुल सका। बात करना और लिखना अब भी काम करता है।",
-        list: "ये आपके आवेदन हैं। किसी एक को खोलें, मैं बताऊँगा कि वह कहाँ तक पहुँचा है, या नया आवेदन शुरू करें।",
         chips: ["अब मुझे क्या करना है?", "कौन से दस्तावेज़ चाहिए?", "मेरे स्टेटमेंट पर पासवर्ड है", "कितना समय लगेगा?", "मुझे किसी से बात करनी है"] },
-  id: { role: "Pemandu pengajuan Anda", start: "Panggilan video dengan Saarthi", onCall: "Sedang panggilan · ketuk untuk membuka",
+  id: { role: "Pemandu pengajuan Anda", start: "Panggilan video dengan {name}", onCall: "Sedang panggilan · ketuk untuk membuka",
         placeholder: "Tulis pertanyaan", send: "Tanya", step: "Langkah", of: "dari", listening: "Mendengarkan…", thinking: "Berpikir…",
         you: "Anda", mic: "Bicara tanpa tangan", micOff: "Berhenti mendengarkan", cam: "Kamera", cc: "Teks", mute: "Bisukan suara",
         unmute: "Suarakan", end: "Akhiri panggilan", expand: "Perbesar", shrink: "Perkecil", minimise: "Kecilkan",
-        voice: "Suara", auto: "Terbaik yang tersedia", aiBadge: "Presenter AI", sound: "🔊 Ketuk untuk menyalakan suara",
+        voice: "Suara", switchTo: "Ganti presenter", auto: "Terbaik yang tersedia", aiBadge: "Presenter AI", sound: "🔊 Ketuk untuk menyalakan suara",
         avatarSilent: "Presenter video tidak merespons, jadi saya menjawab dengan suara perangkat ini.",
         topics: "Tanya tentang", more: "Pertanyaan lain", moreHint: "Semua yang bisa saya jawab untuk pengajuan Anda saat ini",
         connecting: "Menghubungkan presenter video…", avatarEnded: "Sesi presenter video telah berakhir. Saya lanjutkan dari sini.", camNote: "Kamera Anda hanya terlihat oleh Anda.", interrupt: "Ketuk saya untuk menyela",
         noMic: "Mikrofon diblokir di sini. Anda bisa mengetik pertanyaan.",
         noCam: "Kamera tidak bisa dibuka di sini. Bicara dan mengetik tetap berfungsi.",
-        list: "Ini daftar pengajuan Anda. Buka salah satu dan saya akan memberi tahu posisinya, atau mulai pengajuan baru.",
         chips: ["Apa yang harus saya lakukan?", "Dokumen apa yang dibutuhkan?", "Rekening koran saya berpassword", "Berapa lama prosesnya?", "Saya ingin bicara dengan petugas"] },
 };
 
@@ -187,39 +199,30 @@ function visemeOf(ch) {
   return "small";
 }
 
-function buildPresenter() {
-  const root = svg("svg", { viewBox: "0 0 240 240", class: "guide-avatar", role: "img", "aria-label": NAME });
-  const body = svg("g", { class: "av-body" }, root);
-  svg("path", { class: "av-shirt", d: "M38 240 C42 200 70 184 120 182 C170 184 198 200 202 240 Z" }, body);
-  svg("path", { class: "av-collar", d: "M100 184 L120 206 L140 184 Z" }, body);
-  svg("path", { class: "av-lanyard", d: "M104 186 L118 222 M136 186 L122 222" }, body);
-  svg("rect", { class: "av-badge", x: "111", y: "218", width: "18", height: "14", rx: "2" }, body);
-
-  const head = svg("g", { class: "av-head" }, root);
-  svg("rect", { class: "av-skin", x: "108", y: "160", width: "24", height: "28", rx: "8" }, head); // neck
-  svg("ellipse", { class: "av-skin", cx: "68", cy: "112", rx: "8", ry: "12" }, head);              // ears
-  svg("ellipse", { class: "av-skin", cx: "172", cy: "112", rx: "8", ry: "12" }, head);
-  svg("ellipse", { class: "av-skin", cx: "120", cy: "112", rx: "52", ry: "60" }, head);
-  svg("path", { class: "av-hair", d: "M66 108 C62 62 92 44 122 46 C156 48 180 66 174 108 C170 92 160 78 146 74 C128 84 98 84 80 76 C72 86 68 96 66 108 Z" }, head);
-  svg("ellipse", { class: "av-cheek", cx: "90", cy: "136", rx: "9", ry: "5" }, head);
-  svg("ellipse", { class: "av-cheek", cx: "150", cy: "136", rx: "9", ry: "5" }, head);
-  const brows = svg("g", { class: "av-brows" }, head);
-  svg("path", { d: "M86 92 Q97 86 108 91" }, brows);
-  svg("path", { d: "M132 91 Q143 86 154 92" }, brows);
-  const eyes = svg("g", { class: "av-eyes" }, head);
-  [97, 143].forEach((cx) => {
-    svg("ellipse", { class: "av-eye-white", cx, cy: "108", rx: "9", ry: "7" }, eyes);
-  });
-  const irises = svg("g", { class: "av-irises" }, eyes);
-  [97, 143].forEach((cx) => {
-    svg("circle", { class: "av-iris", cx, cy: "108", r: "5" }, irises);
-    svg("circle", { class: "av-glint", cx: cx + 1.8, cy: "106", r: "1.4" }, irises);
-  });
-  const lids = svg("g", { class: "av-lids" }, eyes);
-  [97, 143].forEach((cx) => svg("rect", { class: "av-skin", x: cx - 10, y: "100", width: "20", height: "16" }, lids));
-  svg("path", { class: "av-nose", d: "M120 112 Q116 126 120 130 Q123 131 125 129" }, head);
-  const mouth = svg("path", { class: "av-mouth", d: MOUTH.rest }, head);
-  return { root, mouth, irises, eyes };
+function buildPresenter(kind = "female", { live = false } = {}) {
+  const root = el("div", "guide-avatar photo-presenter");
+  const img = document.createElement("img");
+  img.className = "presenter-img";
+  img.decoding = "async";
+  img.draggable = false;
+  const ring = el("i", "presenter-ring");
+  root.append(img, ring);
+  // The live face draws over the photo once its portrait has loaded; until then the photo shows.
+  const face = live && createFace ? createFace() : null;
+  if (face) {
+    root.insertBefore(face.canvas, ring);
+    face.onReady(() => root.classList.add("live"));
+  }
+  const set = (k) => {
+    const p = PRESENTERS[k] || PRESENTERS.female;
+    if (root.dataset.presenter === k) return;
+    img.src = p.src;
+    img.alt = p.name;
+    root.dataset.presenter = k;
+    if (face) { root.classList.remove("live"); face.setPortrait(k, p.src); }
+  };
+  set(kind);
+  return { root, set, face };
 }
 
 /* ------------------------------------------------------------------ text made for speaking */
@@ -257,22 +260,28 @@ export function createGuide({ api, context, actions }) {
     user: null, open: false, minimised: false, expanded: false, lang: "en", lastKey: null, busy: false,
     muted: store("guide-muted") === "1", captions: store("guide-captions") !== "0",
     convo: false, rec: null, camStream: null, micStream: null, audioCtx: null, startedAt: 0, speakToken: 0,
+    presenter: "female",
   };
+  // Hindi first person is gendered: the female presenter says "सुन रही हूँ", the male "सुन रहा हूँ".
+  const inVoice = (text) => (g.lang === "hi" && g.presenter === "female"
+    ? text.replace(/रहा हूँ/g, "रही हूँ").replace(/करूँगा/g, "करूँगी") : text);
+  const presenterName = (lang = "en") => PRESENTERS[g.presenter][lang] || PRESENTERS[g.presenter].name;
 
   // ---- layout: a floating video-call window
   const launcher = el("button", "guide-launcher hidden");
   launcher.type = "button";
+  const launcherPresenter = buildPresenter();
   const launcherFace = el("span", "guide-mini");
-  launcherFace.appendChild(buildPresenter().root);
+  launcherFace.appendChild(launcherPresenter.root);
   const launcherText = el("span", "guide-launcher-text");
   launcher.append(launcherFace, launcherText);
 
   const call = el("section", "guide-call hidden");
-  call.setAttribute("aria-label", `Video call with ${NAME}`);
+  call.setAttribute("aria-label", "Video call");
 
   const top = el("div", "guide-top");
   const who = el("div", "guide-who");
-  const whoName = el("b", null, NAME);
+  const whoName = el("b");
   const whoRole = el("span", "small muted");
   who.append(whoName, whoRole);
   const live = el("span", "guide-live");
@@ -286,10 +295,14 @@ export function createGuide({ api, context, actions }) {
   langPick.setAttribute("aria-label", "Language");
   const expandBtn = iconButton("expand", "Larger", "small");
   const minBtn = iconButton("minimise", "Minimise", "small");
-  top.append(who, live, langPick, expandBtn, minBtn);
+  const switchBtn = el("button", "guide-ctl small guide-switch");
+  switchBtn.type = "button";
+  switchBtn.textContent = "⇄";
+  top.append(who, live, langPick, switchBtn, expandBtn, minBtn);
 
   const stage = el("div", "guide-stage");
-  const presenter = buildPresenter();
+  const presenter = buildPresenter("female", { live: true });
+  const face = presenter.face; // null without WebGL: the still photo and its speaking ring remain
   const presenterWrap = el("button", "guide-presenter");
   presenterWrap.type = "button";
   presenterWrap.appendChild(presenter.root);
@@ -356,10 +369,16 @@ export function createGuide({ api, context, actions }) {
 
   /* ---------------------------------------------------------------- presenter life */
 
-  function setViseme(name) { presenter.mouth.setAttribute("d", MOUTH[name] || MOUTH.rest); }
+  // The speech rhythm drives the live face's mouth, and the speaking ring when the photo is still.
+  const ENERGY = { rest: 0, small: 0.35, round: 0.6, wide: 0.75, open: 1 };
+  function setViseme(name) {
+    face?.rig.setViseme(name);
+    stage.style.setProperty("--talk", String(ENERGY[name] ?? 0.3));
+  }
   function setMood(mood) { // idle | talking | listening | thinking
     stage.dataset.mood = mood;
     launcherFace.dataset.mood = mood;
+    face?.rig.setState(mood);
   }
   setMood("idle");
 
@@ -367,6 +386,7 @@ export function createGuide({ api, context, actions }) {
   let lifeTimers = [];
   function startLife() {
     stopLife();
+    if (face) { face.start(); return; } // the live face blinks, glances and settles by itself
     const blink = () => {
       stage.classList.add("blink");
       setTimeout(() => stage.classList.remove("blink"), 140);
@@ -376,12 +396,14 @@ export function createGuide({ api, context, actions }) {
       const listening = stage.dataset.mood === "listening";
       const x = listening ? 0 : (Math.random() - 0.5) * 5;
       const y = stage.dataset.mood === "thinking" ? -3 : (Math.random() - 0.5) * 2.5;
-      presenter.irises.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+      // A small drift of the framing reads as a person settling in their chair.
+      presenter.root.style.setProperty("--drift-x", `${(x * 0.4).toFixed(2)}%`);
+      presenter.root.style.setProperty("--drift-y", `${(y * 0.3).toFixed(2)}%`);
       lifeTimers[1] = setTimeout(glance, 1200 + Math.random() * 2600);
     };
     lifeTimers = [setTimeout(blink, 1500), setTimeout(glance, 900)];
   }
-  function stopLife() { lifeTimers.forEach(clearTimeout); lifeTimers = []; }
+  function stopLife() { lifeTimers.forEach(clearTimeout); lifeTimers = []; face?.stop(); }
 
   // Lip sync: a timeline of mouth shapes estimated from the text, re-anchored to every word boundary
   // the voice reports, so it stays in step whether or not the voice sends boundary events.
@@ -439,6 +461,9 @@ export function createGuide({ api, context, actions }) {
         if (/premium|enhanced|natural|neural/i.test(v.name)) score += 30;
         if (/google|microsoft.*online|siri/i.test(v.name)) score += 18;
         if (v.default) score += 2;
+        const wantFemale = g.presenter === "female";
+        if ((wantFemale ? FEMALE_VOICES : MALE_VOICES).test(v.name)) score += 45;
+        else if ((wantFemale ? MALE_VOICES : FEMALE_VOICES).test(v.name)) score -= 60;
         return { v, score };
       })
       .filter(Boolean)
@@ -447,12 +472,12 @@ export function createGuide({ api, context, actions }) {
   }
   function chosenVoice() {
     const ranked = rankVoices(g.lang);
-    const saved = store(`guide-voice-${g.lang}`);
+    const saved = store(`guide-voice-${g.presenter}-${g.lang}`);
     return ranked.find((v) => v.voiceURI === saved) || ranked[0] || null;
   }
   function fillVoicePicker() {
     const ranked = rankVoices(g.lang).slice(0, 12);
-    const saved = store(`guide-voice-${g.lang}`) || "";
+    const saved = store(`guide-voice-${g.presenter}-${g.lang}`) || "";
     const auto = el("option", null, `${UI[g.lang].auto}${ranked[0] ? ` (${ranked[0].name})` : ""}`);
     auto.value = "";
     voicePick.replaceChildren(auto, ...ranked.map((v) => {
@@ -514,7 +539,7 @@ export function createGuide({ api, context, actions }) {
       captionNow.textContent = UI[g.lang].connecting;
       try {
         const [LK, session] = await Promise.all([loadLiveKit(),
-          api("/api/guide/avatar", { method: "POST", body: JSON.stringify({ language: g.lang }) })]);
+          api("/api/guide/avatar", { method: "POST", body: JSON.stringify({ language: g.lang, presenter: g.presenter }) })]);
         const room = new LK.Room({ adaptiveStream: true });
         room.on(LK.RoomEvent.AudioPlaybackStatusChanged, showSoundPrompt);
         room.on(LK.RoomEvent.TrackSubscribed, (track) => {
@@ -573,7 +598,7 @@ export function createGuide({ api, context, actions }) {
       api("/api/guide/avatar/stop", { method: "POST",
         body: JSON.stringify({ session_id: session.session_id, session_token: session.session_token }) }).catch(() => {});
     }
-    if (byProvider && g.open) note.textContent = UI[g.lang].avatarEnded;
+    if (byProvider && g.open) note.textContent = inVoice(UI[g.lang].avatarEnded);
   }
 
   function stopSpeaking() {
@@ -647,10 +672,15 @@ export function createGuide({ api, context, actions }) {
           setMood("talking");
           lipsStart(spoken, rate);
         };
-        u.onboundary = (e) => { if (token === g.speakToken && e.name !== "sentence") lipsSync(e.charIndex); };
+        u.onboundary = (e) => {
+          if (token !== g.speakToken || e.name === "sentence") return;
+          lipsSync(e.charIndex);
+          face?.rig.word(spoken.slice(e.charIndex).split(/\s/, 1)[0]);
+        };
         const finish = () => {
           if (token !== g.speakToken) { resolve(); return; }
           lipsStop();
+          face?.rig.sentenceEnd();
           if (i === parts.length - 1) { setMood("idle"); resolve(); }
         };
         u.onend = finish;
@@ -776,7 +806,7 @@ export function createGuide({ api, context, actions }) {
 
   function addTranscript(who, text) {
     const line = el("p", `guide-line ${who}`);
-    line.append(el("b", null, who === "bot" ? NAME : UI[g.lang].you), document.createTextNode(` ${text}`));
+    line.append(el("b", null, who === "bot" ? presenterName() : UI[g.lang].you), document.createTextNode(` ${text}`));
     transcript.appendChild(line);
     while (transcript.children.length > 12) transcript.removeChild(transcript.firstChild);
     transcript.scrollTop = transcript.scrollHeight;
@@ -786,7 +816,7 @@ export function createGuide({ api, context, actions }) {
     const j = result.journey;
     bar.style.width = `${j.progress}%`;
     stepChip.textContent = `${UI[g.lang].step} ${j.step_number} ${UI[g.lang].of} ${j.total_steps}`;
-    stepChip.classList.remove("hidden");
+    stepChip.classList.toggle("hidden", j.step === "list");
     actionRow.replaceChildren(...result.actions.map((a) => {
       const button = el("button", a.id === "callback" ? "ghost" : "stamp", a.label);
       button.addEventListener("click", async () => {
@@ -921,7 +951,7 @@ export function createGuide({ api, context, actions }) {
     if (!stopped) form.finish();
   }
 
-  async function ask(message = "") {
+  async function ask(message = "", { greet = false } = {}) {
     // During the form interview every message is an answer (or a command) for the current field.
     if (flow.active && message) { handleFormAnswer(message); return; }
     if (!flow.active && message && form?.open() && FORM_WORDS.start.some((w) => message.toLowerCase().includes(w))) {
@@ -934,12 +964,15 @@ export function createGuide({ api, context, actions }) {
     g.busy = true;
     stopSpeaking();
     input.value = "";
-    if (message) { addTranscript("me", message); setMood("thinking"); captionNow.textContent = UI[g.lang].thinking; }
+    if (message) { addTranscript("me", message); setMood("thinking"); captionNow.textContent = inVoice(UI[g.lang].thinking); }
     let reply = null;
     try {
-      const { caseId } = context();
-      reply = await api("/api/guide", { method: "POST", body: JSON.stringify({ message, case_id: caseId, language: g.lang }) });
+      const { caseId, screen, field } = context();
+      reply = await api("/api/guide", { method: "POST", body: JSON.stringify({ message, case_id: caseId, language: g.lang,
+        screen, field: !caseId && screen !== "list" ? field : null, greet, presenter: g.presenter }) });
       renderJourney(reply);
+      face?.rig.setMood(reply.mood || "warm");
+      if (reply.field && !message) actions.highlight?.(reply.field);
     } catch (error) {
       reply = { reply: error.message };
     } finally { g.busy = false; }
@@ -1004,26 +1037,23 @@ export function createGuide({ api, context, actions }) {
     }));
   }
 
-  // Greet again only when the customer's step actually changes, not on every repaint.
+  // Speak again only when the customer's step (or, on a new application, the field to fill next)
+  // actually changes, not on every repaint.
+  let refreshTimer = 0;
   async function refresh() {
     if (!g.open || !g.user) return;
-    const { caseId, screen } = context();
-    if (screen === "list") {
-      if (g.lastKey !== "list") {
-        g.lastKey = "list";
-        bar.style.width = "0%";
-        stepChip.classList.add("hidden");
-        actionRow.replaceChildren();
-        await say(UI[g.lang].list);
-        if (g.convo) listen();
-      }
-      return;
-    }
-    let key = "details";
-    if (caseId) {
+    if (g.busy) { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, 400); return; }
+    const { caseId, screen, field } = context();
+    let key = screen === "list" ? "list" : `details:${field || ""}`;
+    if (screen !== "list" && caseId) {
       try { key = `${caseId}:${(await api(`/api/cases/${caseId}/journey`)).step}`; } catch { return; }
     }
-    if (key !== g.lastKey) { g.lastKey = key; ask(""); }
+    // During the voice form interview, the interview asks the questions; field hints would talk over it.
+    if (key !== g.lastKey && !(flow.active && key.startsWith("details:"))) {
+      const greet = g.lastKey === null;
+      g.lastKey = key;
+      ask("", { greet });
+    }
     loadQuestions();
   }
 
@@ -1051,6 +1081,7 @@ export function createGuide({ api, context, actions }) {
   }
   function minimise() {
     g.minimised = true;
+    face?.stop();
     call.classList.add("hidden");
     relabel();
     launcher.classList.remove("hidden");
@@ -1073,13 +1104,19 @@ export function createGuide({ api, context, actions }) {
 
   function relabel() {
     const t = UI[g.lang];
-    launcherText.textContent = g.minimised ? `${NAME} · ${t.onCall}` : t.start;
+    launcherText.textContent = g.minimised ? `${presenterName(g.lang)} · ${t.onCall}` : t.start.replace("{name}", presenterName(g.lang));
+    whoName.textContent = presenterName();
+    call.setAttribute("aria-label", `Video call with ${presenterName()}`);
+    presenter.set(g.presenter);
+    launcherPresenter.set(g.presenter);
+    switchBtn.title = `${t.switchTo}: ${PRESENTERS[g.presenter === "female" ? "male" : "female"].name}`;
+    switchBtn.setAttribute("aria-label", switchBtn.title);
     launcher.classList.toggle("on-call", g.minimised);
     whoRole.textContent = t.role;
     if (!avatar.session) aiBadge.textContent = t.aiBadge;
     input.placeholder = t.placeholder;
     send.textContent = t.send;
-    listenText.textContent = t.listening;
+    listenText.textContent = inVoice(t.listening);
     voiceLabel.textContent = t.voice;
     selfLabel.textContent = t.you;
     presenterWrap.setAttribute("aria-label", t.interrupt);
@@ -1094,6 +1131,7 @@ export function createGuide({ api, context, actions }) {
     ccBtn.setAttribute("aria-pressed", String(g.captions));
     captionBar.classList.toggle("hidden", !g.captions);
     call.classList.toggle("expanded", g.expanded);
+    face?.setFraming(g.expanded ? 0.48 : 0.5);
     langPick.value = g.lang;
     moreSummary.textContent = t.more;
     moreHint.textContent = t.moreHint;
@@ -1130,8 +1168,18 @@ export function createGuide({ api, context, actions }) {
     endAvatar();
     Promise.resolve(hadAvatar ? startAvatar() : null).finally(refresh);
   });
+  function applyPresenter(kind, { remember = false } = {}) {
+    if (!PRESENTERS[kind] || kind === g.presenter) return;
+    g.presenter = kind;
+    if (remember && g.user) store(`guide-presenter-${g.user.uid}`, kind);
+    stopSpeaking();
+    relabel();
+    // A photoreal session shows one avatar; switching starts a new one with the other presenter.
+    if (avatar.room) { endAvatar(); startAvatar(); }
+  }
+  switchBtn.addEventListener("click", () => applyPresenter(g.presenter === "female" ? "male" : "female", { remember: true }));
   voicePick.addEventListener("change", () => {
-    store(`guide-voice-${g.lang}`, voicePick.value);
+    store(`guide-voice-${g.presenter}-${g.lang}`, voicePick.value);
     const sample = { en: "Hello, this is how I sound.", hi: "नमस्ते, मेरी आवाज़ ऐसी है।", id: "Halo, beginilah suara saya." }[g.lang];
     say(sample);
   });
@@ -1142,6 +1190,10 @@ export function createGuide({ api, context, actions }) {
     setUser(user, lang) {
       g.user = user && (user.role === "borrower" || user.role === "loan_officer") ? user : null;
       if (lang && UI[lang]) g.lang = lang;
+      // The presenter of the other gender from the person's own profile (female if not stated); a
+      // presenter the person picked themselves on this device wins.
+      const saved = g.user ? store(`guide-presenter-${g.user.uid}`) : null;
+      g.presenter = PRESENTERS[saved] ? saved : (PRESENTERS[g.user?.guide_presenter] ? g.user.guide_presenter : "female");
       if (!g.user) endCall();
       relabel();
       launcher.classList.toggle("hidden", !g.user || (g.open && !g.minimised));
@@ -1155,6 +1207,7 @@ export function createGuide({ api, context, actions }) {
       refresh();
       renderFormButtons();
     },
+    setPresenter(kind) { applyPresenter(kind, { remember: true }); }, // a profile change replaces a device pick
     onUploadError(message) {
       if (!g.open) return;
       // Known problems get the guide's fuller help; anything else is read out as the server wrote it.

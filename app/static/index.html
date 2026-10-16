@@ -141,6 +141,9 @@
           <option value="underwriter">Credit officer</option>
           <option value="risk_admin">Admin</option>
         </select></div>
+      <div class="field"><label for="t-gender">Gender (optional)</label>
+        <select id="t-gender"><option value="">Prefer not to say</option><option value="female">Female</option>
+          <option value="male">Male</option><option value="other">Other</option></select></div>
       <div class="field"><label for="t-password">Initial password (12+ characters)</label>
         <input id="t-password" type="password" required minlength="12" autocomplete="new-password"></div>
       <div class="actions"><button class="stamp" type="submit">Create account</button></div>
@@ -151,6 +154,17 @@
   <section id="view-account" class="hidden">
     <h1>Account</h1>
     <p class="muted" id="account-who"></p>
+    <form class="auth sheet" id="profile-form">
+      <h2>Profile</h2>
+      <div class="field"><label for="p-gender">Gender (optional)</label>
+        <select id="p-gender">
+          <option value="">Prefer not to say</option><option value="female">Female</option>
+          <option value="male">Male</option><option value="other">Other</option>
+        </select>
+        <span class="hint">Only chooses your video guide's presenter. It is never used in any loan decision.</span></div>
+      <div class="actions"><button class="stamp" type="submit">Save profile</button></div>
+      <p class="small muted" id="profile-note" role="status"></p>
+    </form>
     <form class="auth sheet" id="account-form">
       <h2>Change password</h2>
       <div class="field"><label for="p-current">Current password</label>

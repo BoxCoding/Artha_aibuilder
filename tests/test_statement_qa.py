@@ -246,7 +246,7 @@ def test_guide_introduces_itself_and_admits_when_it_did_not_understand() -> None
     from app.ai.guide import HELP_TEXT, scripted
 
     state = {"step": "review", "action": "wait", "documents": 1, "max_documents": 3}
-    assert scripted(state, "whats ur name", "en", None)[0] == HELP_TEXT["identity"]["en"]
+    assert scripted(state, "whats ur name", "en", None)[0] == HELP_TEXT["identity"]["en"].format(name="Saarthi")
     assert "AI" in HELP_TEXT["identity"]["en"] and "not a person" in HELP_TEXT["identity"]["en"]
     assert scripted(state, "blah blah", "en", None)[0] == HELP_TEXT["unclear"]["en"]
     assert "loan officer" in scripted(state, "What do I do next?", "en", None)[0]

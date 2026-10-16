@@ -75,6 +75,8 @@ class Settings(BaseSettings):
     liveavatar_api_key: SecretStr | None = None
     liveavatar_sandbox: bool = True
     liveavatar_avatar_id: str = "dd73ea75-1218-4ef3-92ce-606d5f7fbc0a"  # "Wayne", the only sandbox avatar
+    liveavatar_avatar_id_female: str | None = None  # paid plans: an avatar per guide presenter
+    liveavatar_avatar_id_male: str | None = None
     liveavatar_max_session_seconds: int = 120
     # Avatar sessions one person may start per 10 minutes. Sandbox sessions are free and last ~1 minute,
     # so testing needs headroom; real credits are scarce (the free plan is ~5 minutes a month).

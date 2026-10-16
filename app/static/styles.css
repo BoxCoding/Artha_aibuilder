@@ -496,8 +496,34 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
 .guide-presenter { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: none; cursor: pointer; }
 .guide-presenter:hover { background: none; }
 .guide-avatar { width: 100%; height: 100%; display: block; }
-/* Face sits in the upper half so captions never cover the mouth. */
-.guide-stage .guide-avatar { transform: translateY(-9%) scale(.92); }
+/* Photo presenters (Sahayika / Sahayak). The face sits in the upper part of the frame so captions
+   never cover it; speech shows as a ring that pulses with the rhythm of the words. */
+.photo-presenter { position: relative; width: 100%; height: 100%; overflow: hidden; background: #e9ecf2; }
+.presenter-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%;
+  transform: translate(var(--drift-x, 0), var(--drift-y, 0)) scale(1.05); transition: transform 1.8s ease, filter .3s ease;
+  user-select: none; -webkit-user-drag: none; }
+.guide-call.expanded .presenter-img { object-position: 50% 16%; }
+.guide-stage[data-mood="idle"] .presenter-img, .guide-stage[data-mood="talking"] .presenter-img { animation: presenter-breathe 6s ease-in-out infinite; }
+.guide-stage[data-mood="thinking"] .presenter-img { filter: saturate(.85) brightness(.97); }
+@keyframes presenter-breathe { 0%, 100% { scale: 1; } 50% { scale: 1.012; } }
+.presenter-ring { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: 0; transition: opacity .25s ease, box-shadow .12s linear; }
+.guide-stage[data-mood="talking"] .presenter-ring {
+  opacity: 1;
+  box-shadow: inset 0 0 0 calc(2px + var(--talk, 0) * 5px) rgba(15, 181, 166, .85),
+              inset 0 0 calc(18px + var(--talk, 0) * 30px) rgba(15, 181, 166, .35);
+}
+.guide-stage[data-mood="listening"] .presenter-ring { opacity: 1; box-shadow: inset 0 0 0 3px rgba(123, 92, 255, .9); animation: presenter-listen 1.4s ease-in-out infinite; }
+@keyframes presenter-listen { 50% { box-shadow: inset 0 0 0 6px rgba(123, 92, 255, .55); } }
+/* The live face (face.js) draws over the photo once its portrait has loaded. */
+.presenter-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity .35s ease; }
+.photo-presenter.live .presenter-canvas { opacity: 1; }
+.photo-presenter.live .presenter-img { visibility: hidden; animation: none; }
+.guide-stage[data-mood="talking"] .photo-presenter.live .presenter-ring { box-shadow: inset 0 0 0 2px rgba(15, 181, 166, .75); }
+.guide-mini .photo-presenter { border-radius: 50%; }
+.guide-mini .presenter-img { object-position: 50% 14%; transform: scale(1.9); transform-origin: 50% 12%; }
+.guide-mini .presenter-ring { display: none; }
+.guide-mini[data-mood="talking"] { box-shadow: 0 0 0 3px #0fb5a6; }
+.guide-switch { font-size: 1rem; line-height: 1; font-weight: 700; }
 .av-skin { fill: var(--av-skin); }
 .av-hair { fill: var(--av-hair); }
 .av-shirt { fill: #f3f1ff; }
@@ -575,7 +601,7 @@ table.kfs td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); }
   .guide-call, .guide-call.expanded { right: 0; bottom: 0; width: 100vw; max-height: 92vh; border-radius: 18px 18px 0 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-mood] .av-head, .av-body, .guide-live i, .guide-listen i, .guide-pulse { animation: none; }
+  [data-mood] .av-head, .av-body, .guide-live i, .guide-listen i, .guide-pulse, .presenter-img, .presenter-ring { animation: none !important; }
 }
 
 /* Photoreal presenter (LiveAvatar) */

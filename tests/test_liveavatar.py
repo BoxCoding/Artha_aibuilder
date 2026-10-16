@@ -61,7 +61,7 @@ def test_provider_refusal_becomes_unavailable(with_key: None) -> None:
 
 
 def test_route_roles_config_and_csp(with_key: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_start(settings, language):  # type: ignore[no-untyped-def]
+    async def fake_start(settings, language, presenter="female"):  # type: ignore[no-untyped-def]
         return {"session_id": "s-1", "livekit_url": "wss://x.livekit.cloud", "livekit_token": "lk-1",
                 "session_token": "jwt-1", "max_seconds": 60, "sandbox": True}
     monkeypatch.setattr(liveavatar, "start_session", fake_start)
@@ -73,7 +73,7 @@ def test_route_roles_config_and_csp(with_key: None, monkeypatch: pytest.MonkeyPa
 
 
 def test_session_limit_is_looser_in_sandbox_than_with_real_credits(with_key: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_start(settings, language):  # type: ignore[no-untyped-def]
+    async def fake_start(settings, language, presenter="female"):  # type: ignore[no-untyped-def]
         return {"session_id": "s", "livekit_url": "wss://x.livekit.cloud", "livekit_token": "t",
                 "session_token": "j", "max_seconds": 60, "sandbox": settings.liveavatar_sandbox}
     monkeypatch.setattr(liveavatar, "start_session", fake_start)

@@ -87,6 +87,9 @@ users = Table(
     Column("locked_until", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("last_login_at", DateTime(timezone=True), nullable=True),
+    # Optional, self-declared, used only to choose the video guide's presenter. Never copied onto an
+    # application, never sent to a model, never used in any credit decision.
+    Column("gender", String(20), nullable=True),
 )
 
 jobs = Table(
@@ -160,6 +163,22 @@ def get_engine() -> Engine:
     if not url:
         raise RuntimeError("DATABASE_URL is not configured")
     return make_engine(url)
+
+
+def sync_sqlite_schema(engine: Engine) -> None:
+    """Local SQLite only: create missing tables, then add missing nullable columns to existing ones, so a
+    developer's database keeps working after an upgrade. PostgreSQL schemas change only through Alembic."""
+    from sqlalchemy import inspect, text
+
+    metadata.create_all(engine)
+    inspector = inspect(engine)
+    with sqlite_write_lock, engine.begin() as conn:
+        for table in metadata.sorted_tables:
+            present = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in present and column.nullable:
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" '
+                                      f"{column.type.compile(engine.dialect)}"))
 
 
 def is_postgres(engine: Engine) -> bool:

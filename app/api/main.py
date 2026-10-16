@@ -22,13 +22,13 @@ from pydantic import BaseModel, Field
 
 from app.ai.explain import build_explanation, coach_reply
 from app.ai import liveavatar
-from app.ai.guide import guide_reply
+from app.ai.guide import FIELDS as GUIDE_FIELDS, guide_reply
 from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
                               enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
 from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
-                           AskRequest, CreateUserRequest, VoiceFormRequest, DecisionRequest, GuideRequest, LoginRequest, RegisterRequest,
-                           case_view)
+                           AskRequest, CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, ProfileRequest,
+                           RegisterRequest, VoiceFormRequest, case_view)
 from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
@@ -61,9 +61,9 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
     configure_logging("INFO" if settings.is_prod else "DEBUG")
     if settings.database_url and settings.database_url.startswith("sqlite"):
         # Local single-process convenience. PostgreSQL schemas are managed by Alembic (`alembic upgrade head`).
-        from app.db import get_engine, metadata
+        from app.db import get_engine, sync_sqlite_schema
 
-        metadata.create_all(get_engine())
+        sync_sqlite_schema(get_engine())
     get_accounts()  # seeds demo accounts when demo mode is on
     if settings.pipeline_mode == "inline" and settings.database_url:
         # A restart kills in-process pipeline runs. Nothing else will resume them in inline mode
@@ -210,7 +210,8 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed.")
     enforce(f"register-ip:{client_ip(request, settings)}", 5, 3600)
     try:
-        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password)
+        user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password,
+                                       Role.BORROWER, payload.gender)
     except AccountExists as exc:
         # Deliberately the same shape as a validation error; the audit log records what happened.
         get_store().audit("anonymous", "none", "REGISTER_DUPLICATE", "account", {"email_sha": _digest(payload.email)})
@@ -272,7 +273,7 @@ async def create_user(payload: CreateUserRequest,
     enforce(f"admin-create:{principal.uid}", 30, 3600)
     try:
         user = await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password,
-                                       payload.role)
+                                       payload.role, payload.gender)
     except AccountExists as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
     except ValueError as exc:
@@ -323,10 +324,27 @@ async def knowledge_search(q: str, principal: Principal = Depends(limiter(60, 60
     return {"results": await asyncio.to_thread(search, q, audience, 5), "audience": audience}
 
 
+def guide_presenter_for(gender: str | None) -> str:
+    """The video guide shows the presenter of the other gender; anyone who has not said sees the female
+    presenter. Viewers can switch presenter in the call window at any time."""
+    return "male" if gender == "female" else "female"
+
+
+@app.post("/api/me/profile")
+async def update_profile(payload: ProfileRequest, principal: Principal = Depends(limiter(10, 60))) -> dict[str, Any]:
+    """Self-declared profile details. Gender is optional and only chooses the video guide's presenter."""
+    user = await asyncio.to_thread(get_accounts().set_gender, principal.uid, payload.gender)
+    get_store().audit(principal.uid, principal.role.value, "PROFILE_UPDATED", "account", {})
+    return {"gender": user.gender, "guide_presenter": guide_presenter_for(user.gender)}
+
+
 @app.get("/api/me")
 async def me(principal: Principal = Depends(current_principal)) -> dict[str, Any]:
     settings = get_settings()
+    user = await asyncio.to_thread(get_accounts().repo.get, principal.uid)
+    gender = user.gender if user else None
     return {"uid": principal.uid, "name": principal.name, "role": principal.role.value,
+            "gender": gender, "guide_presenter": guide_presenter_for(gender),
             "ai_mode": settings.llm_mode, "ai": await _ai_status() if principal.role != Role.BORROWER else None,
             "languages": settings.supported_languages}
 
@@ -617,9 +635,18 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
         authorise_case(case, principal)
     language = payload.language if payload.language in settings.supported_languages else (
         case.language if case else "en")
-    state = journey(case, settings.max_documents_per_case)
+    if payload.screen == "list" and case is None:
+        # Only this person's own applications (for an officer, the ones they sourced), never anyone else's.
+        rows = await asyncio.to_thread(get_store().list_for_owner, principal.uid, 20, False)
+        state = {"step": "list", "step_number": 0, "total_steps": 8, "progress": 0, "missing": [], "action": "none",
+                 "cases": rows}
+    else:
+        state = journey(case, settings.max_documents_per_case)
+        if state["step"] == "details" and payload.field in GUIDE_FIELDS:
+            state["field"] = payload.field
+    state["greet"] = payload.greet
     result = await guide_reply(state, payload.message, language, case, get_gateway(),
-                               UsageMeter(budget=settings.token_budget_per_case))
+                               UsageMeter(budget=settings.token_budget_per_case), presenter=payload.presenter)
     if payload.message.strip():
         get_store().audit(principal.uid, principal.role.value, "GUIDE_MESSAGE", case.case_id if case else "no-case",
                           {"author": result["author"], "step": result["step"], "kind": result.get("kind")})
@@ -631,6 +658,7 @@ async def guide(payload: GuideRequest, principal: Principal = Depends(limiter(30
 
 class AvatarStart(BaseModel):
     language: str = Field(default="en", max_length=5)
+    presenter: str = Field(default="female", pattern="^(female|male)$")
 
 
 class AvatarStop(BaseModel):
@@ -648,7 +676,7 @@ async def guide_avatar(payload: AvatarStart, principal: Principal = Depends(curr
     settings = get_settings()
     enforce(f"liveavatar:{principal.uid}", liveavatar.sessions_per_10_min(settings), 600)
     try:
-        session = await liveavatar.start_session(settings, payload.language)
+        session = await liveavatar.start_session(settings, payload.language, presenter=payload.presenter)
     except liveavatar.AvatarUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "The video presenter is not available right now.") from exc
     get_store().audit(principal.uid, principal.role.value, "AVATAR_SESSION_STARTED", session["session_id"],
@@ -1055,7 +1083,7 @@ def _asset_version() -> str:
     import hashlib
 
     digest = hashlib.sha256()
-    for name in ("app.js", "guide.js", "styles.css", "index.html"):
+    for name in ("app.js", "guide.js", "face.js", "styles.css", "index.html"):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:12]
 

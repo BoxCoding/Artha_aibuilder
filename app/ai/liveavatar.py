@@ -34,13 +34,23 @@ def enabled(settings: Settings) -> bool:
     return settings.liveavatar_api_key is not None and bool(settings.liveavatar_api_key.get_secret_value())
 
 
-async def start_session(settings: Settings, language: str, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+def avatar_for(settings: Settings, presenter: str) -> str:
+    """Sandbox offers one avatar; with a paid key, per-presenter avatars can be configured."""
+    if not settings.liveavatar_sandbox:
+        chosen = settings.liveavatar_avatar_id_male if presenter == "male" else settings.liveavatar_avatar_id_female
+        if chosen:
+            return chosen
+    return settings.liveavatar_avatar_id
+
+
+async def start_session(settings: Settings, language: str, client: httpx.AsyncClient | None = None,
+                        presenter: str = "female") -> dict[str, Any]:
     if not enabled(settings):
         raise AvatarUnavailable("not configured")
     key = settings.liveavatar_api_key.get_secret_value()  # type: ignore[union-attr]
     token_request = {
         "mode": "FULL",
-        "avatar_id": settings.liveavatar_avatar_id,
+        "avatar_id": avatar_for(settings, presenter),
         "is_sandbox": settings.liveavatar_sandbox,
         # Sandbox sessions are refused above 60 seconds; paid tiers allow longer.
         "max_session_duration": min(settings.liveavatar_max_session_seconds, SANDBOX_MAX_SECONDS)

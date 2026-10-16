@@ -2,7 +2,7 @@
 scores, signal codes and evidence never reach a borrower session."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,6 +30,11 @@ class RegisterRequest(BaseModel):
     email: str = Field(max_length=254)
     name: str = Field(min_length=2, max_length=120)
     password: str = Field(min_length=1, max_length=256)
+    gender: str | None = Field(default=None, max_length=20)  # optional; video guide presenter only
+
+
+class ProfileRequest(BaseModel):
+    gender: str | None = Field(default=None, max_length=20)
 
 
 class CreateCaseRequest(BaseModel):
@@ -57,6 +62,7 @@ class CreateUserRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     role: Role
     password: str = Field(min_length=1, max_length=256)
+    gender: str | None = Field(default=None, max_length=20)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -86,6 +92,12 @@ class GuideRequest(BaseModel):
     message: str = Field(default="", max_length=500)
     language: str = Field(default="en", max_length=5)
     case_id: str | None = Field(default=None, max_length=40)
+    # Where the person is: an application (new or open) or their list of applications.
+    screen: Literal["application", "list"] = "application"
+    # On a new application, the first required field still empty ("consent" / "save" when only those remain).
+    field: str | None = Field(default=None, max_length=20)
+    greet: bool = False  # the first words of a call
+    presenter: Literal["female", "male"] = "female"
 
 
 class CallbackRequest(BaseModel):

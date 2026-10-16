@@ -164,6 +164,14 @@ function renderAuthForm() {
     password.minLength = state.config?.password_min_length || 12;
     form.appendChild(el("p", "small muted", `At least ${password.minLength} characters. A short phrase works well.`));
   }
+  const genderPick = registering && !setup ? genderSelect("a-gender", "") : null;
+  if (genderPick) {
+    const wrap = el("div", "field");
+    const lab = el("label", null, "Gender (optional)");
+    lab.htmlFor = "a-gender";
+    wrap.append(lab, genderPick, el("span", "hint", "Only chooses your video guide's presenter. Never used in any loan decision."));
+    form.appendChild(wrap);
+  }
   const actions = el("div", "actions");
   const submit = el("button", "stamp", setup ? "Create admin account" : registering ? "Create account" : "Sign in");
   submit.type = "submit";
@@ -184,7 +192,7 @@ function renderAuthForm() {
     submit.disabled = true;
     try {
       if (setup) await firstAdmin(name.value.trim(), email.value.trim(), password.value);
-      else if (registering) await register(name.value.trim(), email.value.trim(), password.value);
+      else if (registering) await register(name.value.trim(), email.value.trim(), password.value, genderPick?.value || null);
       else await signIn({ email: email.value.trim(), password: password.value });
     } finally {
       submit.disabled = false;
@@ -204,9 +212,19 @@ async function firstAdmin(name, email, password) {
   } catch (error) { $("gate-note").textContent = error.message; }
 }
 
-async function register(name, email, password) {
+const GENDER_OPTIONS = [["", "Prefer not to say"], ["female", "Female"], ["male", "Male"], ["other", "Other"]];
+function genderSelect(id, value) {
+  const select = el("select");
+  select.id = id;
+  GENDER_OPTIONS.forEach(([v, label]) => {
+    const o = el("option", null, label); o.value = v; if (v === (value || "")) o.selected = true; select.appendChild(o);
+  });
+  return select;
+}
+
+async function register(name, email, password, gender) {
   try {
-    await api("/api/register", { method: "POST", body: JSON.stringify({ name, email, password }) });
+    await api("/api/register", { method: "POST", body: JSON.stringify({ name, email, password, gender }) });
     state.me = await api("/api/me");
     $("gate-note").textContent = "";
     afterSignIn();
@@ -321,7 +339,7 @@ async function loadTeam() {
     form.onsubmit = async (event) => {
       event.preventDefault();
       const payload = { name: $("t-name").value.trim(), email: $("t-email").value.trim(), role: $("t-role").value,
-                        password: $("t-password").value };
+                        password: $("t-password").value, gender: $("t-gender").value || null };
       try {
         await api("/api/admin/users", { method: "POST", body: JSON.stringify(payload) });
         $("team-note").textContent = `Account created for ${payload.email}. Share the password with them securely; `
@@ -337,6 +355,19 @@ function renderAccount() {
   show("account");
   const form = $("account-form");
   $("account-who").textContent = `${state.me.name} · ${ROLE_LABEL[state.me.role]}`;
+  const profile = $("profile-form");
+  const pick = $("p-gender");
+  pick.value = state.me.gender && state.me.gender !== "unspecified" ? state.me.gender : "";
+  profile.onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const result = await api("/api/me/profile", { method: "POST", body: JSON.stringify({ gender: pick.value || null }) });
+      state.me = { ...state.me, gender: result.gender, guide_presenter: result.guide_presenter };
+      guide?.setUser(state.me, state.lang);
+      guide?.setPresenter(result.guide_presenter);
+      $("profile-note").textContent = "Saved. Your video guide has been updated.";
+    } catch (error) { $("profile-note").textContent = error.message; }
+  };
   form.onsubmit = async (event) => {
     event.preventDefault();
     try {
@@ -403,6 +434,7 @@ function renderApply() {
         pincode: "560041" };
       Object.entries(demo).forEach(([k, v]) => { const n = $(`a-${k}`); if (n) n.value = v; });
       $("f-consent").checked = true;
+      guide?.onView(currentView);
     });
     const bar = el("div", "demo-hint");
     bar.appendChild(el("p", "small", "Demo mode: fill the form with a fictional customer in one click, or clear it."));
@@ -468,7 +500,12 @@ function renderApply() {
   consentBox.appendChild(consentLabel);
   form.appendChild(consentBox);
 
+  // The video guide walks the customer through the form: each finished field moves it to the next one.
+  let guideTimer = 0;
+  form.addEventListener("change", () => { clearTimeout(guideTimer); guideTimer = setTimeout(() => guide?.onView(currentView), 350); });
+
   const next = el("button", "stamp", "Save and continue to bank statements");
+  next.id = "f-save";
   const note = el("p", "small error-text notice-slot");
   note.setAttribute("role", "alert");
   const voiceFilled = new Set(); // ids of fields last filled by voice, still unedited
@@ -1962,7 +1999,36 @@ function drawBars(container, entries, wideLabels = false) {
 /* ------------------------------------------------------------------ video guide */
 
 // The guide's buttons take the customer to the right place; submitting and accepting stay with them.
+// The first required field of a new application that is still empty or invalid, for the video guide.
+// Mirrors the server's checks; "consent" and "save" when only those are left.
+const GUIDE_FIELD_CHECKS = [
+  ["full_name", (v) => v.trim().length >= 2],
+  ["mobile", (v) => /^[6-9]\d{9}$/.test(v.replace(/\D/g, "").replace(/^91(?=\d{10}$)/, ""))],
+  ["pan", (v) => /^[A-Z]{5}\d{4}[A-Z]$/i.test(v.trim())],
+  ["business_name", (v) => v.trim().length >= 2],
+  ["address_line", (v) => v.trim().length >= 3],
+  ["city", (v) => v.trim().length >= 2],
+  ["pincode", (v) => /^[1-9]\d{5}$/.test(v.trim())],
+];
+const GUIDE_FIELD_TARGET = { consent: "f-consent", save: "f-save" };
+function nextGuideField() {
+  if (!$("a-full_name") || $("f-consent")?.disabled) return null;
+  const missing = GUIDE_FIELD_CHECKS.find(([key, ok]) => !ok($(`a-${key}`)?.value || ""));
+  if (missing) return missing[0];
+  return $("f-consent")?.checked ? "save" : "consent";
+}
+
 const GUIDE_ACTIONS = {
+  // Point at the field the guide is talking about, without taking the cursor away from the customer.
+  highlight(field) {
+    const node = $(GUIDE_FIELD_TARGET[field] || `a-${field}`);
+    if (!node || node.disabled) return;
+    const target = node.type === "checkbox" ? node.closest(".field") || node : node;
+    if (document.activeElement !== node) target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    target.classList.add("guide-pulse");
+    setTimeout(() => target.classList.remove("guide-pulse"), 4000);
+  },
+  new_application() { renderApply(); },
   fill_form() {
     if (currentView !== "apply" || state.caseId) renderApply();
     const first = $("a-full_name");
@@ -2014,7 +2080,8 @@ guide = createGuide({
   api,
   // Only the application on screen is the guide's subject; the list and account pages are not.
   context: () => ({ caseId: ["apply", "progress", "outcome"].includes(currentView) ? state.caseId : null,
-                    screen: currentView === "mine" ? "list" : "application" }),
+                    screen: currentView === "mine" ? "list" : "application",
+                    field: currentView === "apply" && !state.caseId ? nextGuideField() : null }),
   actions: GUIDE_ACTIONS,
 });
 

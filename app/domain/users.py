@@ -23,6 +23,14 @@ from app.domain.models import Role
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
 
+GENDERS = ("female", "male", "other", "unspecified")
+
+
+def clean_gender(value: str | None) -> str | None:
+    value = (value or "").strip().lower()
+    return value if value in GENDERS else None
+
+
 DEMO_ACCOUNTS: dict[str, tuple[str, Role]] = {
     "meena@demo.artha": ("Meena Devi", Role.BORROWER),
     "arun@demo.artha": ("Arun Prakash", Role.UNDERWRITER),
@@ -57,6 +65,7 @@ class User:
     locked_until: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = None
+    gender: str | None = None  # self-declared; video guide presenter only
 
 
 def normalise_email(email: str) -> str:
@@ -128,14 +137,14 @@ class SqlUserRepository:
                     is_demo=row.is_demo, active=row.active, session_version=row.session_version,
                     failed_logins=row.failed_logins, locked_until=_aware(row.locked_until),
                     created_at=_aware(row.created_at) or datetime.now(timezone.utc),
-                    last_login_at=_aware(row.last_login_at))
+                    last_login_at=_aware(row.last_login_at), gender=getattr(row, "gender", None))
 
     @staticmethod
     def _values(user: User) -> dict[str, object]:
         return {"email": user.email, "name": user.name, "role": user.role.value, "password_hash": user.password_hash,
                 "is_demo": user.is_demo, "active": user.active, "session_version": user.session_version,
                 "failed_logins": user.failed_logins, "locked_until": user.locked_until,
-                "created_at": user.created_at, "last_login_at": user.last_login_at}
+                "created_at": user.created_at, "last_login_at": user.last_login_at, "gender": user.gender}
 
     def get(self, uid: str) -> User | None:
         from sqlalchemy import select
@@ -201,7 +210,8 @@ class AccountService:
         self.min_length = password_min_length
 
     # ------------------------------------------------------------------ provisioning
-    def register(self, email: str, name: str, password: str, role: Role = Role.BORROWER) -> User:
+    def register(self, email: str, name: str, password: str, role: Role = Role.BORROWER,
+                 gender: str | None = None) -> User:
         email = normalise_email(email)
         if not valid_email(email):
             raise ValueError("Enter a valid email address.")
@@ -214,8 +224,17 @@ class AccountService:
         if len(name) < 2:
             raise ValueError("Enter your name.")
         user = User(uid=f"usr-{uuid.uuid4().hex[:16]}", email=email, name=name, role=role,
-                    password_hash=hash_password(password), created_at=datetime.now(timezone.utc))
+                    password_hash=hash_password(password), created_at=datetime.now(timezone.utc),
+                    gender=clean_gender(gender))
         return self.repo.create(user)
+
+    def set_gender(self, uid: str, gender: str | None) -> User:
+        user = self.repo.get(uid)
+        if user is None:
+            raise KeyError(uid)
+        updated = replace(user, gender=clean_gender(gender))
+        self.repo.save(updated)
+        return updated
 
     def seed_demo_accounts(self) -> None:
         for email, (name, role) in DEMO_ACCOUNTS.items():

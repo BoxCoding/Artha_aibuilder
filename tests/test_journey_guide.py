@@ -6,9 +6,11 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai.guide import HELP_TEXT, STEP_TEXT, intent_of
+from app.ai.guide import HELP_TEXT, STEP_TEXT, intent_of, scripted
 from app.api.main import app
 from app.domain.models import Role
+from app.journey.state import journey
+from tests.fixtures import APPLICANT
 from tests.test_intake_and_roles import customer, new_case, staff, wait_until_processed
 
 INTERNAL = re.compile(r"\b(score|band|pd|probability|fraud|forensic|signal|FR-|RC-|model|tamper)", re.I)
@@ -25,7 +27,9 @@ def attach_sample(client: TestClient, case_id: str, persona: str = "meena") -> N
 
 
 def test_every_step_has_text_in_every_language() -> None:
-    for texts in (*STEP_TEXT.values(), *HELP_TEXT.values()):
+    from app.ai.guide import FIELD_TEXT, LIST_STATUS, LIST_TEXT
+
+    for texts in (*STEP_TEXT.values(), *HELP_TEXT.values(), *FIELD_TEXT.values(), *LIST_STATUS.values(), *LIST_TEXT.values()):
         assert set(texts) == {"en", "hi", "id"}
 
 
@@ -126,3 +130,69 @@ def test_guide_answers_are_logged_with_their_kind_but_not_the_message(caplog: py
     logged = [r for r in caplog.records if r.getMessage() == "guide_answer"]
     assert logged and "kind=profile:name" in logged[-1].detail
     assert all("What is my name" not in str(getattr(r, "detail", "")) for r in caplog.records)
+
+
+# --------------------------------------------------------------------------- scope, step by step, expressions
+
+def test_off_topic_questions_are_declined() -> None:
+    from app.ai.guide import HELP_TEXT, route
+
+    state = journey(None)
+    for question in ("what is the weather today", "who will win the cricket match", "write me a poem", "मौसम कैसा है"):
+        assert route(state, question, "en", None)[:2] == (HELP_TEXT["unclear"]["en"], "unclear"), question
+    for question in ("what do I do next", "hello", "which documents do you need", "what is APR"):
+        assert route(state, question, "en", None)[1] != "unclear", question
+
+
+def test_a_new_application_is_guided_one_field_at_a_time() -> None:
+    from app.ai.guide import FIELD_TEXT, GREETING
+
+    state = journey(None) | {"field": "pan"}
+    assert scripted(state, "", "en", None)[0] == FIELD_TEXT["pan"]["en"]
+    first = scripted(state | {"greet": True}, "", "hi", None)[0]
+    assert first.startswith(GREETING["hi"]) and first.endswith(FIELD_TEXT["pan"]["hi"])
+
+
+def test_guide_endpoint_speaks_the_next_field_and_ignores_unknown_ones() -> None:
+    client = customer()
+    reply = client.post("/api/guide", json={"field": "mobile", "greet": True, "language": "en"}).json()
+    assert reply["field"] == "mobile" and "mobile number" in reply["reply"] and reply["mood"] == "happy"
+    reply = client.post("/api/guide", json={"field": "salary", "language": "en"}).json()
+    assert reply["field"] is None and reply["reply"] == STEP_TEXT["details"]["en"]
+
+
+def test_the_list_summary_names_only_the_persons_own_applications() -> None:
+    owner, other = customer(), customer()
+    for client, name in ((owner, "Owner Traders"), (other, "Someone Else Stores")):
+        body = {"applicant": APPLICANT | {"business_name": name}, "requested_amount": 200000, "tenure_months": 24,
+                "language": "en", "consent": True}
+        assert client.post("/api/cases", json=body).status_code == 201
+    reply = owner.post("/api/guide", json={"screen": "list", "language": "en"}).json()
+    assert "Owner Traders: not submitted yet." in reply["reply"] and "Someone Else" not in reply["reply"]
+    assert reply["actions"] == [{"id": "new_application", "label": "Start a new application"}]
+    assert "cases" not in reply["journey"]
+
+
+def test_the_female_presenter_speaks_hindi_in_the_feminine() -> None:
+    from app.ai.guide import in_voice
+
+    assert in_voice("मैं मदद कर सकता हूँ", "hi", "female") == "मैं मदद कर सकती हूँ"
+    assert in_voice("मैं मदद कर सकता हूँ", "hi", "male") == "मैं मदद कर सकता हूँ"
+    assert in_voice("I can help", "en", "female") == "I can help"
+
+
+def test_the_face_follows_the_conversation() -> None:
+    from app.ai.guide import mood_of
+
+    assert mood_of(journey(None), "I am worried I can't pay", "help:distress") == "empathetic"
+    assert mood_of(journey(None), "write me a poem", "unclear") == "polite"
+    assert mood_of({"step": "accept_terms"}, "", "step") == "happy"
+    assert mood_of({"step": "decided", "outcome": "declined"}, "", "step") == "empathetic"
+    assert mood_of({"step": "review"}, "how long", "help:time") == "warm"
+
+
+def test_the_guide_introduces_itself_by_the_presenter_on_screen() -> None:
+    client = customer()
+    for presenter, name in (("female", "Sahayika"), ("male", "Saarthi")):
+        reply = client.post("/api/guide", json={"message": "who are you?", "presenter": presenter}).json()
+        assert reply["kind"] == "identity" and reply["reply"].startswith(f"I'm {name},")
