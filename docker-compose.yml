@@ -18,7 +18,7 @@ services:
       retries: 10
 
   migrate:
-    build: {context: ., dockerfile: deploy/Dockerfile}
+    build: {context: ., dockerfile: Dockerfile}
     command: ["alembic", "upgrade", "head"]
     environment: &env
       APP_ENV: ${APP_ENV:-prod}
@@ -36,7 +36,7 @@ services:
       db: {condition: service_healthy}
 
   api:
-    build: {context: ., dockerfile: deploy/Dockerfile}
+    build: {context: ., dockerfile: Dockerfile}
     environment:
       <<: *env
       TRUST_PROXY_HEADERS: "false"
@@ -45,7 +45,7 @@ services:
       migrate: {condition: service_completed_successfully}
 
   worker:
-    build: {context: ., dockerfile: deploy/Dockerfile}
+    build: {context: ., dockerfile: Dockerfile}
     command: ["python", "-m", "app.worker"]
     environment: *env
     stop_grace_period: 120s

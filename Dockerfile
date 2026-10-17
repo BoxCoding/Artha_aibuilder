@@ -1,4 +1,4 @@
-# Build: docker build -f deploy/Dockerfile -t artha .
+# Build: docker build -t ledgerlens .
 # One image, three entry points:
 #   API      (default)  uvicorn app.api.main:app
 #   worker              python -m app.worker
