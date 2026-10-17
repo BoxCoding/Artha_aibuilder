@@ -57,19 +57,22 @@ MONTHS = {
 
 IN_WORDS = ("receive", "received", "came in", "come in", " get ", " got ", "collected", " dapat", " dapet", "credited", "credit", "deposit", "inflow", "earn",
             "income", "sales", "got paid", "मिला", "मिले", "आया", "आए", "जमा", "प्राप्त", "कमाई", "आमदनी", "आय",
-            "masuk", "terima", "diterima", "pemasukan", "pendapatan", "setor")
+            "masuk", "terima", "diterima", "pemasukan", "pendapatan", "setor",
+            "aaya", "aaye", "aayi", "jama hua", "jama hue", "kamai", "aamdani", "aamdni")
 OUT_WORDS = ("paid", "pay ", "pay?", "payment", "spent", "spend", "debit", "expense", "outflow", "sent", "withdr", "went out",
-             "खर्च", "भुगतान", "भेजा", "दिया", "निकाला", "keluar", "bayar", "dibayar", "pengeluaran", "tarik", "kirim")
-INCOME_WORDS = ("income", "earn", "sales", "business", "कमाई", "आमदनी", "आय", "pendapatan", "pemasukan", "penjualan")
-SPEND_WORDS = ("spend", "spent", "spending", "expense", "outflow", "खर्च", "pengeluaran", "belanja")
+             "खर्च", "भुगतान", "भेजा", "दिया", "निकाला", "keluar", "bayar", "dibayar", "pengeluaran", "tarik", "kirim",
+             "kharch", "bheja", "bheje", "bhugtan", "nikala", "nikale")
+INCOME_WORDS = ("income", "earn", "sales", "business", "कमाई", "आमदनी", "आय", "pendapatan", "pemasukan", "penjualan",
+                "kamai", "aamdani", "aamdni", "dhanda", "dhandha")
+SPEND_WORDS = ("spend", "spent", "spending", "expense", "outflow", "खर्च", "pengeluaran", "belanja", "kharch")
 
 # (keywords, direction, categories)
 CATEGORY_WORDS: tuple[tuple[tuple[str, ...], str, frozenset[str]], ...] = (
-    (("rent", "किराया", "sewa"), "out", frozenset({"rent"})),
-    (("salary", "salaries", "wage", "staff", "वेतन", "तनख्वाह", "gaji", "upah"), "out", frozenset({"staff_salary"})),
-    (("bill", "electricity", "utilit", "water", "broadband", "gas", "बिजली", "बिल", "listrik", "tagihan"), "out",
+    (("rent", "किराया", "sewa", "kiraya"), "out", frozenset({"rent"})),
+    (("salary", "salaries", "wage", "staff", "वेतन", "तनख्वाह", "gaji", "upah", "tankhwah", "tankha", "pagaar"), "out", frozenset({"staff_salary"})),
+    (("bill", "electricity", "utilit", "water", "broadband", "gas", "बिजली", "बिल", "listrik", "tagihan", "bijli"), "out",
      frozenset({"utilities"})),
-    (("emi", "instalment", "installment", "loan repay", "किश्त", "किस्त", "cicilan", "angsuran"), "out",
+    (("emi", "instalment", "installment", "loan repay", "किश्त", "किस्त", "cicilan", "angsuran", "kisht", "kist "), "out",
      frozenset({"emi_debit"})),
     (("supplier", "stock", "purchase", "vendor", "wholesale", "सप्लायर", "माल", "pemasok", "pembelian"), "out",
      frozenset({"supplier_payment"})),
@@ -108,12 +111,14 @@ ADVICE_WORDS = ("invest", "stock market", "shares", "mutual fund", "crypto", "bi
 
 ACTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("concentration", ("concentrat", "depend on one", "depends on one", "single customer", "one payer", "one customer",
-                       "एक ग्राहक", "satu pelanggan", "bergantung")),
+                       "एक ग्राहक", "satu pelanggan", "bergantung", "ek hi customer", "ek hi grahak")),
     ("top_parties", ("top customer", "biggest customer", "main customer", "largest customer", "top payer", "who pays",
                      "top supplier", "biggest supplier", "main supplier", "top payee", "who do i pay", "who did i pay",
                      "who do they pay", "who did they pay", "paid the most", "pay the most", "pays the most",
                      "सबसे बड़े ग्राहक", "सबसे ज़्यादा भुगतान", "किसे", "pelanggan terbesar", "pemasok terbesar",
-                     "paling banyak bayar", "siapa yang")),
+                     "paling banyak bayar", "siapa yang", "sabse bada customer", "sabse bade customer",
+                     "sabse bada grahak", "sabse bade grahak", "sabse bada supplier", "paisa kaun deta",
+                     "sabse zyada paisa kaun", "sabse jyada paisa kaun", "kisko sabse zyada", "kisko sabse jyada")),
     ("period", ("what period", "statement period", "period does", "date range", "cover", "how many transactions are",
                 "number of transactions in", "किस अवधि", "अवधि", "periode", "rentang tanggal")),
     ("share", ("share of", "what share", "cash share", "upi share", "percentage", "percent", "proportion", "% of",
@@ -123,21 +128,28 @@ ACTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("breakdown", ("breakdown", "where does my money", "where did my money", "where does the money",
                    "where did the money", "where does money", "money go", "money went", "by category", "categories", "split",
                    "बंटवारा", "किस पर", "कहाँ जाता", "कहां जाता", "कहाँ गया", "कहां गया", "कहाँ से आता", "rincian",
-                   "kategori", "ke mana uang", "kemana uang")),
+                   "kategori", "ke mana uang", "kemana uang", "kahan jata", "kaha jata", "kahan gaya", "kaha gaya",
+                   "kahan kharch", "kaha kharch", "kahan se aata", "kaha se aata")),
     ("trend", ("going up", "going down", "trend", "increas", "grow", "rising", "falling", "declin", "बढ़", "घट",
                "badh raha", "badh rahi", "badh rhi", "ghat raha", "ghat rahi", "kam ho raha",
                "naik", "turun", "tren")),
-    ("count", ("how many", "number of", "count", "कितनी बार", "कितने लेन", "berapa kali", "berapa banyak", "jumlah transaksi")),
-    ("average", ("average", "avg", "mean", "typical", "per month", "औसत", "rata-rata", "rata rata")),
+    ("count", ("how many", "number of", "count", "कितनी बार", "कितने लेन", "berapa kali", "berapa banyak", "jumlah transaksi",
+               "kitni baar", "kitni bar", "kitne transaction")),
+    ("average", ("average", "avg", "mean", "typical", "per month", "औसत", "rata-rata", "rata rata", "ausat", "har mahine")),
     ("largest", ("biggest", "largest", "highest", "maximum", "max ", "top ", "most ", "सबसे बड़", "सबसे ज़्यादा",
-                 "सबसे ज्यादा", "terbesar", "tertinggi", "paling besar")),
-    ("smallest", ("smallest", "lowest", "least", "minimum", "सबसे कम", "सबसे छोट", "terkecil", "terendah", "paling kecil")),
+                 "सबसे ज्यादा", "terbesar", "tertinggi", "paling besar", "sabse bada", "sabse badi",
+                 "sabse zyada", "sabse jyada")),
+    ("smallest", ("smallest", "lowest", "least", "minimum", "सबसे कम", "सबसे छोट", "terkecil", "terendah", "paling kecil", "sabse kam", "sabse chhota",
+                  "sabse choti", "sabse chhoti")),
     ("list", ("show", "list", "which transaction", "what came in", "what went out", "find", "search", "all transaction",
               "payments to", "payments from", "transactions above", "transactions over", "दिखा", "सूची", "tampilkan",
-              "daftar", "cari")),
-    ("total", ("how much", "total", "sum", "कितना", "कितने रुपये", "कुल", "berapa")),
+              "daftar", "cari", "dikhao", "dikha do")),
+    ("total", ("how much", "total", "sum", "कितना", "कितने रुपये", "कुल", "berapa", "kitna", "kitne paise",
+               "kitne rupaye")),
 )
-WHICH_MONTH = ("which month", "what month", "कौन सा महीना", "किस महीने", "bulan apa", "bulan mana")
+LOWEST_WORDS = ("lowest", "least", "minimum", "worst", "सबसे कम", "terendah", "paling kecil", "sabse kam")
+WHICH_MONTH = ("which month", "what month", "कौन सा महीना", "किस महीने", "bulan apa", "bulan mana", "kis mahine",
+               "kaun sa mahina", "konsa mahina", "kaunse mahine", "kis month")
 
 CATEGORY_LABELS = {
     "en": {"upi_credit": "UPI receipts", "neft_imps_credit": "bank transfers in", "card_settlement": "card sales",
@@ -484,7 +496,7 @@ class Parser:
         if q.action == "period":
             return q
         if _has(text, WHICH_MONTH):
-            q.which_month = "low" if _has(text, ("lowest", "least", "minimum", "worst", "सबसे कम", "terendah", "paling kecil")) else "high"
+            q.which_month = "low" if _has(text, LOWEST_WORDS) else "high"
             q.action = "which_month"
 
         if (_has(text, ("balance", "बैलेंस", "saldo")) and _has(text, ("day", "दिन", "hari"))
@@ -492,7 +504,7 @@ class Parser:
             q.action = "health"
         # Balance questions are their own family.
         if _has(text, ("balance", "बैलेंस", "शेष", "saldo")) and q.action not in ("health",):
-            q.balance = ("lowest" if q.action == "smallest" or _has(text, ("lowest", "minimum", "सबसे कम", "terendah"))
+            q.balance = ("lowest" if q.action == "smallest" or _has(text, LOWEST_WORDS)
                          else "highest" if q.action == "largest" else "average" if q.action == "average" or _has(text, ("average",))
                          else "closing")
             q.action = "balance"

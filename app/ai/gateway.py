@@ -247,15 +247,26 @@ def pdf_as_text(data: bytes, max_chars: int = 60_000) -> str:
     return "\n".join(pages)[:max_chars]
 
 
+# Ollama compiles a schema into a sampling grammar whose regex support has no shorthand classes: a
+# pattern with \d fails the whole request ("failed to parse grammar"). The reply is validated against
+# the original schema afterwards, so spelling the classes out loses nothing.
+_REGEX_CLASSES = ((r"\d", "[0-9]"), (r"\w", "[A-Za-z0-9_]"), (r"\s", "[ \t]"))
+
+
 def inline_refs(schema: dict) -> dict:
-    """Resolve $ref/$defs so the schema is self-contained (what grammar-constrained decoders expect)."""
+    """The schema in the form grammar-constrained decoders accept: $ref/$defs resolved, and regex
+    shorthand classes in `pattern` spelled out."""
     defs = schema.get("$defs", {})
 
     def resolve(node: object) -> object:
         if isinstance(node, dict):
             if "$ref" in node:
                 return resolve(defs[node["$ref"].split("/")[-1]])
-            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+            out = {k: resolve(v) for k, v in node.items() if k != "$defs"}
+            if isinstance(out.get("pattern"), str):
+                for short, spelled in _REGEX_CLASSES:
+                    out["pattern"] = out["pattern"].replace(short, spelled)
+            return out
         if isinstance(node, list):
             return [resolve(v) for v in node]
         return node

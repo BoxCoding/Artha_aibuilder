@@ -299,21 +299,24 @@ def in_voice(text: str, lang: str, presenter: str) -> str:
 KEYWORDS: dict[str, tuple[str, ...]] = {
     "identity": ("your name", "ur name", "who are you", "who r u", "are you a bot", "are you a robot", "are you human",
                  "are you real", "are you ai", "are you a person", "तुम्हारा नाम", "आपका नाम", "आप कौन", "तुम कौन",
-                 "nama kamu", "nama anda", "siapa kamu", "siapa anda", "kamu robot"),
+                 "nama kamu", "nama anda", "siapa kamu", "siapa anda", "kamu robot", "tum kaun", "aap kaun",
+                 "tumhara naam", "aapka naam"),
     "distress": ("worried", "stress", "hardship", "can't pay", "cannot pay", "scared", "परेशान", "चिंता", "मुश्किल",
-                 "susah", "khawatir", "sulit", "takut"),
+                 "susah", "khawatir", "sulit", "takut", "pareshan", "chinta", "tension", "nahi chuka"),
     "human": ("human", "person", "officer", "call me", "call back", "callback", "talk to", "speak to", "agent",
-              "अधिकारी", "बात", "कॉल", "इंसान", "petugas", "telepon", "manusia", "hubungi"),
+              "अधिकारी", "बात", "कॉल", "इंसान", "petugas", "telepon", "manusia", "hubungi", "baat karni", "baat karna",
+              "call karo", "call kar do", "kisi se baat"),
     "private": ("score", "band", "rating", "risk", "fraud", "neighbour", "neighbor", "someone else", "other customer",
                 "other people", "स्कोर", "रेटिंग", "दूसरे", "पड़ोसी", "skor", "orang lain", "tetangga", "nasabah lain"),
     "password": ("password", "पासवर्ड", "kata sandi", "sandi", "locked", "won't open", "can't open"),
     "scan": ("scan", "photo", "picture", "camera", "फ़ोटो", "फोटो", "स्कैन", "foto", "pindai", "gambar"),
     "documents": ("document", "statement", "which file", "what file", "upload", "दस्तावेज़", "स्टेटमेंट", "अपलोड",
-                  "dokumen", "rekening koran", "unggah", "berkas"),
+                  "dokumen", "rekening koran", "unggah", "berkas", "kaunse document", "kaun se document", "kya kya chahiye"),
     "time": ("how long", "when will", "how much time", "kab tak", "कब", "कितना समय", "कितने दिन", "berapa lama",
-             "kapan"),
+             "kapan", "kab milega", "kab milegi", "kab aayega", "kitna time", "kitna samay", "kitne din"),
     "decision": ("why", "reason", "improve", "better", "emi", "instalment", "installment", "interest", "repay",
-                 "क्यों", "कारण", "सुधार", "किश्त", "ब्याज", "चुका", "kenapa", "alasan", "perbaiki", "cicilan", "bunga"),
+                 "क्यों", "कारण", "सुधार", "किश्त", "ब्याज", "चुका", "kenapa", "alasan", "perbaiki", "cicilan", "bunga",
+                 "kyun ", "kyon ", "byaj"),
 }
 # Checked in this order: safety first, then the most specific help.
 INTENT_ORDER = ("identity", "distress", "human", "private", "password", "scan", "documents", "time", "decision")
@@ -321,7 +324,8 @@ INTENT_ORDER = ("identity", "distress", "human", "private", "password", "scan", 
 
 # Asking for the next step, as opposed to a question the guide did not understand.
 NEXT_WORDS = ("next", "what do i do", "what should i do", "what now", "help", "guide me", "start", "hello", "hi ",
-              "आगे", "अब क्या", "क्या करना", "मदद", "नमस्ते", "selanjutnya", "apa yang harus", "bantu", "halo")
+              "आगे", "अब क्या", "क्या करना", "मदद", "नमस्ते", "selanjutnya", "apa yang harus", "bantu", "halo",
+              "aage kya", "ab kya", "kya karna", "kya karu", "madad", "namaste")
 
 
 def intent_of(message: str) -> str:

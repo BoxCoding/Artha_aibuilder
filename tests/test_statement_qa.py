@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.ai.statement_qa import StatementQA, understands
+from app.ai.statement_qa import Parser, StatementQA, understands
 from app.cashflow.categorise import BUSINESS_CREDIT, apply_rules
 from app.domain.formatting import inr
 from app.domain.models import Case, Role
@@ -301,3 +301,29 @@ def test_copilot_endpoint_routes_both_kinds_and_reads_lakh_scenarios() -> None:
     assert scenario["author"] != "statement_engine" and "4,00,000 over 36 months" in scenario["text"]
     flags = ask("Any red flags?")
     assert "POS-" not in flags["text"]  # positive info-level signals are not red flags
+
+
+@pytest.mark.parametrize("question,action", [
+    ("mera sabse bada customer kaun hai", "top_parties"), ("paisa kahan jata hai", "breakdown"),
+    ("rent me kitna kharch hua", "total"), ("kis mahine kamai sabse kam thi", "which_month"),
+    ("har mahine ausat kamai kitni hai", "average"), ("sabse bada payment dikhao", "largest"),
+    ("ek hi customer pe depend hai kya", "concentration"), ("kitni baar EMI bounce hua", "health"),
+])
+def test_roman_hinglish_questions_are_read_without_a_model(question: str, action: str) -> None:
+    parsed = Parser(date(2026, 3, 1), date(2026, 8, 31)).parse(question)
+    assert parsed.action == action and not parsed.inferred
+
+
+def test_which_month_reads_lowest_in_hinglish(meena: Case) -> None:
+    assert "lowest" in StatementQA(meena).answer("kis mahine kamai sabse kam thi").text
+
+
+def test_schemas_sent_to_ollama_have_no_regex_shorthand() -> None:
+    """Ollama's grammar compiler rejects \\d: the whole request failed and every question fell back."""
+    import json
+
+    from app.ai.gateway import inline_refs
+    from app.ai.statement_qa import QueryDraft
+
+    schema = json.dumps(inline_refs(QueryDraft.model_json_schema()))
+    assert "\\\\d" not in schema and "[0-9]{4}-[0-9]{2}" in schema
