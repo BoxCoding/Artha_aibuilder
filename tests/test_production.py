@@ -414,3 +414,11 @@ def test_borrowers_list_only_their_own_applications_without_internals() -> None:
     staff = TestClient(app)
     staff.post("/api/session", json={"email": "arun@demo.artha"})
     assert staff.get("/api/my/cases").status_code == 403
+
+
+def test_hosted_demo_keeps_production_hardening_but_allows_demo_accounts() -> None:
+    with pytest.raises(ConfigurationError):
+        Settings(_env_file=None, app_env="demo")  # dev secret, no database, no receipt seed
+    demo = Settings(_env_file=None, app_env="demo", demo_mode=True, pipeline_mode="inline", secret_key="k" * 40,
+                    database_url="postgresql+psycopg://u@/d", receipt_signing_seed="c2VlZA==")
+    assert demo.is_hosted and not demo.is_prod and demo.demo_mode

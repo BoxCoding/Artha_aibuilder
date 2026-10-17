@@ -134,7 +134,7 @@ async def _health_server(port: int, worker: Worker) -> asyncio.base_events.Serve
 
 async def main() -> None:
     settings = get_settings()
-    configure_logging("INFO" if settings.is_prod else "DEBUG")
+    configure_logging("INFO" if settings.is_hosted else "DEBUG")
     if not settings.database_url:
         raise SystemExit("The worker needs DATABASE_URL: there is no queue without a database.")
     worker = Worker()

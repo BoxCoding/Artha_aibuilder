@@ -58,7 +58,7 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
     """Start: configure logging and the receipt key, then report ready. Stop: drain cleanly."""
     global _signer
     settings = get_settings()  # raises ConfigurationError on an unsafe production configuration
-    configure_logging("INFO" if settings.is_prod else "DEBUG")
+    configure_logging("INFO" if settings.is_hosted else "DEBUG")
     if settings.database_url and settings.database_url.startswith("sqlite"):
         # Local single-process convenience. PostgreSQL schemas are managed by Alembic (`alembic upgrade head`).
         from app.db import get_engine, sync_sqlite_schema
@@ -149,7 +149,7 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
     })
     if "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else "private, max-age=300"
-    if settings.is_prod:
+    if settings.is_hosted:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 

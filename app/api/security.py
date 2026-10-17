@@ -35,7 +35,7 @@ def _serializer(settings: Settings) -> URLSafeTimedSerializer:
 def issue_session(response: Response, user: User, settings: Settings) -> None:
     token = _serializer(settings).dumps({"uid": user.uid, "sv": user.session_version})
     response.set_cookie(COOKIE_NAME, token, max_age=settings.session_ttl_seconds, httponly=True, samesite="strict",
-                        secure=settings.is_prod, path="/")
+                        secure=settings.is_hosted, path="/")
 
 
 def clear_session(response: Response) -> None:

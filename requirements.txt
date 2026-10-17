@@ -10,6 +10,8 @@ pypdf==5.9.0
 pypdfium2==5.6.0
 reportlab==4.4.10
 google-genai==2.23.0
+google-auth==2.58.1      # Application Default Credentials for the Google Cloud REST clients (app/gcp.py)
+httpx==0.28.1            # Ollama, LiveAvatar and Google Cloud REST calls
 google-adk==2.9.0
 google-cloud-modelarmor==0.7.1
 cryptography==50.0.1

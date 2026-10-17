@@ -1,0 +1,4 @@
+# What `gcloud builds submit` leaves behind: the same as the Docker build context excludes.
+.git/
+.gitignore
+#!include:.dockerignore

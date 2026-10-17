@@ -17,7 +17,8 @@ class ConfigurationError(RuntimeError):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_env: Literal["dev", "prod", "test"] = "dev"
+    # "demo" is a hosted public demo: production hardening, but the demo accounts stay on.
+    app_env: Literal["dev", "demo", "prod", "test"] = "dev"
     # Demo mode seeds the four demo accounts and allows password-less sign-in to them. It is refused
     # in production: a role picker is not authentication.
     demo_mode: bool = True
@@ -143,24 +144,33 @@ class Settings(BaseSettings):
         return self.app_env == "prod"
 
     @property
+    def is_hosted(self) -> bool:
+        """Served over the internet: secure cookies, HSTS, real secrets and PostgreSQL."""
+        return self.app_env in ("demo", "prod")
+
+    @property
     def allowed_origins(self) -> set[str]:
         return {o.strip().rstrip("/") for o in (self.web_origin or "").split(",") if o.strip()}
 
     @model_validator(mode="after")
     def _production_guard(self) -> Settings:
-        """Refuse to start in production with settings that are only acceptable on a laptop."""
-        if self.app_env != "prod":
+        """Refuse to start on the internet with settings that are only acceptable on a laptop."""
+        if not self.is_hosted:
             return self
         problems: list[str] = []
         secret = self.secret_key.get_secret_value()
         if secret == _DEV_SECRET or len(secret) < 32:
             problems.append("SECRET_KEY must be a random value of at least 32 characters")
-        if self.demo_mode:
-            problems.append("DEMO_MODE must be false: demo sign-in is not authentication")
         if not self.database_url or not self.database_url.startswith("postgresql"):
             problems.append("DATABASE_URL must point at PostgreSQL; the in-memory store loses cases on restart")
         if not self.receipt_signing_seed:
             problems.append("RECEIPT_SIGNING_SEED is required; receipts signed by an ephemeral key cannot be verified")
+        if self.app_env == "demo":
+            if problems:
+                raise ConfigurationError("Unsafe demo configuration: " + "; ".join(problems))
+            return self
+        if self.demo_mode:
+            problems.append("DEMO_MODE must be false: demo sign-in is not authentication")
         if self.pipeline_mode != "queue":
             problems.append("PIPELINE_MODE must be 'queue' so a restart cannot lose a case mid-analysis")
         if self.llm_mode == "api_key":
