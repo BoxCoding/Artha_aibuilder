@@ -13,9 +13,8 @@ import re
 from typing import Any
 
 from app.ai.explain import EMPATHY, GLOSSARY_QUESTION, INTERNAL_TERMS, NUMBER, SAFE_REDIRECT, coach_offline
-from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
+from app.ai.gateway import LLMGateway, UsageMeter
 from app.ai import statement_qa
-from app.ai.schemas import CoachDraft
 from app.domain.models import Case
 from app.security.injection import detect
 
@@ -494,13 +493,9 @@ async def guide_reply(state: dict[str, Any], message: str, language: str, case: 
             and kind in ("step", "help:documents", "help:time")):
         facts = {"language": lang, "journey": {k: v for k, v in state.items() if k not in ("cases", "greet", "presenter")},
                  "approved_answer": reply, "user_message": message[:500]}
-        try:
-            draft = await gateway.structured(prompt_id="journey_guide", schema=CoachDraft, meter=meter,
-                                             contents=[json.dumps(facts, ensure_ascii=False)])
-            if _safe(draft.reply, json.dumps(facts, ensure_ascii=False)):
-                reply, callback, author = draft.reply, callback or draft.offer_callback, gateway.provider
-        except LLMUnavailable:
-            pass
+        draft = await gateway.reword(prompt_id="journey_guide", meter=meter, contents=[json.dumps(facts, ensure_ascii=False)])
+        if draft and _safe(draft.reply, json.dumps(facts, ensure_ascii=False)):
+            reply, callback, author = draft.reply, callback or draft.offer_callback, gateway.provider
     actions = _actions(state, lang, callback and case is not None)
     if state["step"] == "list":
         actions = [{"id": "new_application", "label": ACTION_LABELS["new_application"][lang]}]

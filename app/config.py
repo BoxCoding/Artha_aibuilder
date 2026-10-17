@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     ai_question_parser: bool = True
     ai_question_parser_timeout_seconds: float = 8.0
     ai_rephrase: bool = False
+    # Rewording must never hold up an answer that is already correct: past this, the computed text is shown.
+    ai_rephrase_timeout_seconds: float = 6.0
     pipeline_ai: bool = True
 
     # HeyGen LiveAvatar: a photoreal face for the video guide. Off unless a key is set. Sandbox mode

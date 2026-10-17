@@ -48,11 +48,18 @@ def ask(case: Case, question: str, gateway: FakeGateway, **kw):  # type: ignore[
     return asyncio.run(answer_with_ai(case, question, "en", gateway, UsageMeter(budget=10_000), **kw))
 
 
-HINGLISH = "june mein maine kitna kamaya"   # "how much did I earn in June" - no English keywords
+HINGLISH = "june ka hisaab samjhao"   # "explain June's accounts" - nothing the keyword parser knows
 
 
 def test_keyword_parser_cannot_read_it_on_its_own(meena: Case) -> None:
     assert not statement_qa.StatementQA(meena).answer(HINGLISH).understood
+
+
+def test_common_hinglish_is_read_without_the_model(meena: Case) -> None:
+    result = statement_qa.StatementQA(meena).answer("june mein maine kitna kamaya")  # "how much did I earn in June"
+    june = sum((t.credit for t in meena.transactions if t.credit > 0 and t.category in BUSINESS_CREDIT
+                and t.txn_date.month == 6), Decimal("0"))
+    assert result.understood and result.figures["total"] == pytest.approx(float(june))
 
 
 def test_model_interprets_and_the_engine_computes_the_exact_figure(meena: Case) -> None:

@@ -27,7 +27,6 @@ from pydantic import BaseModel, Field
 
 from app.ai.explain import INTERNAL_TERMS, NUMBER
 from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
-from app.ai.schemas import CoachDraft
 from app.cashflow.categorise import BUSINESS_CREDIT
 from app.domain.formatting import inr
 from app.domain.models import Case, Transaction
@@ -58,12 +57,12 @@ MONTHS = {
 IN_WORDS = ("receive", "received", "came in", "come in", " get ", " got ", "collected", " dapat", " dapet", "credited", "credit", "deposit", "inflow", "earn",
             "income", "sales", "got paid", "मिला", "मिले", "आया", "आए", "जमा", "प्राप्त", "कमाई", "आमदनी", "आय",
             "masuk", "terima", "diterima", "pemasukan", "pendapatan", "setor",
-            "aaya", "aaye", "aayi", "jama hua", "jama hue", "kamai", "aamdani", "aamdni")
+            "aaya", "aaye", "aayi", "jama hua", "jama hue", "kamai", "kamaya", "kamaye", "aamdani", "aamdni")
 OUT_WORDS = ("paid", "pay ", "pay?", "payment", "spent", "spend", "debit", "expense", "outflow", "sent", "withdr", "went out",
              "खर्च", "भुगतान", "भेजा", "दिया", "निकाला", "keluar", "bayar", "dibayar", "pengeluaran", "tarik", "kirim",
              "kharch", "bheja", "bheje", "bhugtan", "nikala", "nikale")
 INCOME_WORDS = ("income", "earn", "sales", "business", "कमाई", "आमदनी", "आय", "pendapatan", "pemasukan", "penjualan",
-                "kamai", "aamdani", "aamdni", "dhanda", "dhandha")
+                "kamai", "kamaya", "kamaye", "aamdani", "aamdni", "dhanda", "dhandha")
 SPEND_WORDS = ("spend", "spent", "spending", "expense", "outflow", "खर्च", "pengeluaran", "belanja", "kharch")
 
 # (keywords, direction, categories)
@@ -1284,15 +1283,13 @@ async def answer(case: Case, question: str, language: str, gateway: LLMGateway, 
     if (get_settings().ai_rephrase and gateway.enabled and result.understood and result.figures
             and not detect(question)):
         facts = {"language": language, "question": question[:500], "computed_answer": result.text, "figures": result.figures}
-        try:
-            draft = await gateway.structured(prompt_id="statement_qa", schema=CoachDraft, meter=meter,
-                                             contents=[json.dumps(facts, ensure_ascii=False, default=str)])
-            allowed = set(NUMBER.findall(json.dumps(facts, ensure_ascii=False, default=str)))
-            if (not INTERNAL_TERMS.search(draft.reply) and len(draft.reply) <= 700
-                    and all(n in allowed for n in NUMBER.findall(draft.reply))):
-                result.text, result.author = draft.reply, gateway.provider
-        except LLMUnavailable:
-            pass
+        draft = await gateway.reword(prompt_id="statement_qa", meter=meter,
+                                     contents=[json.dumps(facts, ensure_ascii=False, default=str)])
+        allowed = set(NUMBER.findall(json.dumps(facts, ensure_ascii=False, default=str)))
+        if (draft and not INTERNAL_TERMS.search(draft.reply) and len(draft.reply) <= 700
+                and all(n in allowed for n in NUMBER.findall(draft.reply))
+                and draft.reply.count("₹") >= result.text.count("₹")):  # small models sometimes garble the sign
+            result.text, result.author = draft.reply, gateway.provider
     return result.as_dict()
 
 

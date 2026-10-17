@@ -140,6 +140,19 @@ class LLMGateway:
 
         return await self._validated(prompt, schema, meter, attempts, call, backoff=0.8, cap=8.0)
 
+    async def reword(self, *, prompt_id: str, contents: list[object], meter: UsageMeter) -> T | None:
+        """Reword an answer that is already correct, quickly or not at all: the lite model, minimal thinking,
+        one attempt and a hard time limit. None means keep the original wording."""
+        from app.ai.schemas import CoachDraft
+
+        try:
+            return await asyncio.wait_for(
+                self.structured(prompt_id=prompt_id, schema=CoachDraft, meter=meter, contents=contents,
+                                model=self.settings.model_lite, thinking="MINIMAL", attempts=1),
+                timeout=self.settings.ai_rephrase_timeout_seconds)
+        except (LLMUnavailable, asyncio.TimeoutError):
+            return None
+
     async def _ollama_structured(self, prompt: Prompt, schema: type[T], contents: list[object], meter: UsageMeter,
                                  attempts: int) -> T:
         assert self._ollama is not None
