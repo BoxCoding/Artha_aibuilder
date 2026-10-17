@@ -4,6 +4,12 @@
 #
 #   PROJECT_ID=my-project deploy/demo.sh
 #
+# Optional, read from the environment:
+#   LLM_MODE         vertex (default: Gemini through the service account) or api_key
+#   GEMINI_API_KEY   stored in Secret Manager; needed for LLM_MODE=api_key
+#   LIVEAVATAR_API_KEY, LIVEAVATAR_SANDBOX (default true)   HeyGen video presenter, stored in Secret Manager
+#   PIPELINE_AI (default true), AI_REPHRASE (default false)
+#
 # Safe to run again: existing resources are reused and only a new revision is deployed.
 # For the full production layout (HA database, worker service, private access) see deploy/README.md.
 set -euo pipefail
@@ -18,10 +24,18 @@ cd "$(dirname "$0")/.."
 
 step() { printf '\n== %s\n' "$*"; }
 exists() { "$@" >/dev/null 2>&1; }
-secret() {  # create the secret on first run; never overwrite one that exists
-  exists gcloud secrets describe "$1" || printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --quiet
+grant() {
   gcloud secrets add-iam-policy-binding "$1" --member="serviceAccount:$SA" \
     --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+}
+secret() {  # create the secret on first run; never overwrite one that exists
+  exists gcloud secrets describe "$1" || printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --quiet
+  grant "$1"
+}
+api_key() {  # an API key you supply: a new version each time it is given, so rotating is a re-run
+  if exists gcloud secrets describe "$1"; then printf '%s' "$2" | gcloud secrets versions add "$1" --data-file=- --quiet
+  else printf '%s' "$2" | gcloud secrets create "$1" --data-file=- --quiet; fi
+  grant "$1"
 }
 
 gcloud config set project "$PROJECT_ID" --quiet
@@ -58,11 +72,17 @@ GENERATED=$(python3 -c "import base64, secrets
 print(secrets.token_urlsafe(48)); print(base64.b64encode(secrets.token_bytes(32)).decode())")
 secret ledgerlens-session-key "$(sed -n 1p <<<"$GENERATED")"
 secret ledgerlens-receipt-seed "$(sed -n 2p <<<"$GENERATED")"
+[ -n "${GEMINI_API_KEY:-}" ] && api_key ledgerlens-gemini-api-key "$GEMINI_API_KEY"
+[ -n "${LIVEAVATAR_API_KEY:-}" ] && api_key ledgerlens-liveavatar-key "$LIVEAVATAR_API_KEY"
 
 step "Build $IMAGE (on Cloud Build)"
 gcloud builds submit --config deploy/cloudbuild-image.yaml --substitutions=_IMAGE="$IMAGE" --quiet
 
 SECRETS=SECRET_KEY=ledgerlens-session-key:latest,RECEIPT_SIGNING_SEED=ledgerlens-receipt-seed:latest,DATABASE_URL=ledgerlens-database-url:latest
+# The service also gets the API keys that have been stored (by this run or an earlier one).
+SERVICE_SECRETS=$SECRETS
+exists gcloud secrets describe ledgerlens-gemini-api-key && SERVICE_SECRETS+=,GEMINI_API_KEY=ledgerlens-gemini-api-key:latest
+exists gcloud secrets describe ledgerlens-liveavatar-key && SERVICE_SECRETS+=,LIVEAVATAR_API_KEY=ledgerlens-liveavatar-key:latest
 
 step "Migrate the database"
 gcloud run jobs deploy ledgerlens-migrate --image="$IMAGE" --region="$REGION" --service-account="$SA" \
@@ -76,8 +96,8 @@ step "Deploy the service"
 gcloud run deploy "$SERVICE" --image="$IMAGE" --region="$REGION" --service-account="$SA" \
   --allow-unauthenticated --add-cloudsql-instances="$PROJECT_ID:$REGION:$INSTANCE" \
   --no-cpu-throttling --min-instances=0 --max-instances=3 --concurrency=40 --cpu=1 --memory=2Gi --timeout=300 \
-  --set-env-vars=APP_ENV=demo,DEMO_MODE=true,PIPELINE_MODE=inline,LLM_MODE=vertex,TRUST_PROXY_HEADERS=true,GOOGLE_CLOUD_PROJECT="$PROJECT_ID",GOOGLE_CLOUD_LOCATION=global,WEB_CONCURRENCY=1,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2 \
-  --set-secrets="$SECRETS" --quiet
+  --set-env-vars=APP_ENV=demo,DEMO_MODE=true,PIPELINE_MODE=inline,LLM_MODE="${LLM_MODE:-vertex}",TRUST_PROXY_HEADERS=true,GOOGLE_CLOUD_PROJECT="$PROJECT_ID",GOOGLE_CLOUD_LOCATION=global,WEB_CONCURRENCY=1,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2,PIPELINE_AI="${PIPELINE_AI:-true}",AI_REPHRASE="${AI_REPHRASE:-false}",LIVEAVATAR_SANDBOX="${LIVEAVATAR_SANDBOX:-true}" \
+  --set-secrets="$SERVICE_SECRETS" --quiet
 
 step "Live at"
 gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)'
