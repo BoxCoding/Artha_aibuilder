@@ -5,6 +5,7 @@
 const version = new URL(import.meta.url).search;
 const { el, button, questionPicker, recogniser, Recognition } = await import(`./ui.js${version}`);
 const { createGuide } = await import(`./guide.js${version}`);
+const { cashflowChart, chartLegend, riskGauge, shortRupees } = await import(`./charts.js${version}`);
 
 const $ = (id) => document.getElementById(id);
 const state = { me: null, config: null, authMode: "signin", caseId: null, caseData: null, tab: "memo", docId: null, pages: new Map(), lang: "en" };
@@ -92,7 +93,23 @@ function show(name) {
 
 /* ------------------------------------------------------------------ sign-in */
 
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("theme-toggle").setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+}
+function setupTheme() {
+  let theme = "dark";
+  try { theme = localStorage.getItem("theme") || "dark"; } catch { /* storage blocked: dark */ }
+  applyTheme(theme);
+  $("theme-toggle").addEventListener("click", () => {
+    theme = theme === "light" ? "dark" : "light";
+    applyTheme(theme);
+    try { localStorage.setItem("theme", theme); } catch { /* not remembered */ }
+  });
+}
+
 async function boot() {
+  setupTheme();
   try {
     state.config = await api("/api/config");
   } catch {
@@ -859,6 +876,10 @@ const OUTCOME_TEXT = {
   APPROVE: "Approve", APPROVE_WITH_CONDITIONS: "Approve with conditions", REFER: "Refer to a credit officer",
   REFER_INTEGRITY_REVIEW: "Verify documents before deciding", DECLINE: "Decline",
 };
+// Recommendation colour: green to approve, amber for a person to look closer, red to decline.
+const OUTCOME_TONE = { APPROVE: "approve", APPROVE_WITH_CONDITIONS: "approve", REFER: "refer",
+                       REFER_INTEGRITY_REVIEW: "refer", DECLINE: "decline" };
+const TONE_PILL = { approve: "info", refer: "medium", decline: "high" };
 const REASON_TEXT = {
   "RC-PAYMENT-RETURNS": "returned loan instalments", "RC-LOW-BALANCE-BUFFER": "thin balance buffer",
   "RC-FREQUENT-LOW-BALANCE": "frequent low balances", "RC-VOLATILE-INCOME": "volatile income",
@@ -1246,19 +1267,26 @@ async function loadQueue() {
   const body = $("queue-body");
   body.replaceChildren();
   const data = await api("/api/queue");
+  if (!data.cases.length) body.appendChild(el("div", "empty", "No applications are waiting for review."));
   data.cases.forEach((item) => {
-    const row = el("tr");
-    const band = el("td");
-    if (item.band) band.appendChild(el("span", `band ${item.band.toLowerCase()}`, item.band));
-    const integrity = el("td");
-    if (item.integrity_findings) integrity.appendChild(el("span", "pill high", `${item.integrity_findings} findings`));
-    row.append(el("td", null, item.business_name), el("td", null, `₹${Number(item.requested_amount).toLocaleString("en-IN")}`),
-               band, el("td", null, (item.recommendation || "—").replaceAll("_", " ").toLowerCase()), integrity,
-               el("td", null, item.status.replaceAll("_", " ").toLowerCase()));
-    row.tabIndex = 0;
-    row.addEventListener("click", () => openCase(item.case_id));
-    row.addEventListener("keydown", (event) => { if (event.key === "Enter") openCase(item.case_id); });
-    body.appendChild(row);
+    const cell = (label, value, className = "") => {
+      const box = el("div", className);
+      box.append(el("span", "label", label), value instanceof Node ? value : el("span", "value", value));
+      return box;
+    };
+    const tone = OUTCOME_TONE[item.recommendation];
+    const recommendation = el("span", `pill ${TONE_PILL[tone] || "brand"}`, OUTCOME_TEXT[item.recommendation] || "—");
+    const integrity = item.integrity_findings
+      ? el("span", "pill high", `${item.integrity_findings} to verify`) : el("span", "pill info", "Clean");
+    const name = el("div");
+    name.append(el("h3", null, item.business_name),
+                el("span", "small muted", item.awaiting_second_approval ? "awaiting second approval"
+                  : item.status.replaceAll("_", " ").toLowerCase()));
+    const card = button(undefined, "case-card", () => openCase(item.case_id));
+    card.append(el("span", `band ${(item.band || "").toLowerCase()}`, item.band || "–"), name,
+                cell("Requested", shortRupees(Number(item.requested_amount))), cell("Recommendation", recommendation),
+                cell("Integrity", integrity, "hide-sm"), el("span", "role-go hide-sm", "Review →"));
+    body.appendChild(card);
   });
   $("queue-refresh").onclick = loadQueue;
 }
@@ -1284,22 +1312,58 @@ function renderCaseHead() {
   const head = $("case-head");
   head.replaceChildren();
   $("case-title").textContent = data.business_name;
-  const line = el("div", "spread");
-  const left = el("div");
-  left.appendChild(el("span", null, `₹${data.requested_amount} requested over ${data.tenure_months} months`));
-  left.appendChild(document.createElement("br"));
   const readers = [...new Set(data.documents.map((d) => ({ template: "standard reader", universal: "bank-layout reader",
     ollama: "local AI model", gemini: "Gemini" }[d.parser] || d.parser)))].join(", ");
-  left.appendChild(el("span", "small muted", `${data.transaction_count} transactions · ${data.documents.length} statement(s)`
+  head.appendChild(el("div", "case-meta", `${data.transaction_count} transactions · ${data.documents.length} statement(s)`
     + ` · read by ${readers}` + (data.documents.some((d) => d.decrypted) ? " · password-protected original" : "")));
-  line.appendChild(left);
-  if (data.score) {
-    const right = el("div", "row");
-    right.appendChild(el("span", `band ${data.score.band.toLowerCase()}`, data.score.band));
-    right.appendChild(el("span", null, `${(data.score.pd * 100).toFixed(1)}% estimated default risk`));
-    line.appendChild(right);
+
+  const kpi = (label, value, note, accent = false) => {
+    const box = el("div", accent ? "kpi accent" : "kpi");
+    box.append(el("span", "label", label), el("b", null, value));
+    if (note) box.appendChild(el("small", null, note));
+    return box;
+  };
+  const policy = data.policy;
+  const findings = (data.signals || []).filter((s) => s.category === "FRAUD").length;
+  const kpis = el("div", "kpis");
+  kpis.appendChild(kpi("Requested", `₹${data.requested_amount}`, `over ${data.tenure_months} months`));
+  if (policy && policy.recommended_amount_display !== "0") {
+    kpis.appendChild(kpi("Recommended", `₹${policy.recommended_amount_display}`, `EMI capacity ₹${policy.max_emi_capacity_display}/mo`, true));
   }
-  head.appendChild(line);
+  if (data.features?.median_monthly_inflow) {
+    kpis.appendChild(kpi("Monthly income", shortRupees(Number(data.features.median_monthly_inflow)), "median, business"));
+  }
+  kpis.appendChild(kpi("Integrity", findings ? `${findings} to verify` : "Clean", findings ? "see the Integrity tab" : "no editing found"));
+  head.appendChild(kpis);
+
+  if (data.score) {
+    const risk = el("div", "risk-row");
+    risk.appendChild(riskGauge(Number(data.score.pd), data.score.band));
+    const side = el("div");
+    if (policy) {
+      const tone = OUTCOME_TONE[policy.outcome] || "refer";
+      const line = el("div", `verdict-line ${tone}`);
+      line.append(el("span", "eyebrow", "Recommendation"), el("b", null, OUTCOME_TEXT[policy.outcome] || policy.outcome));
+      if (policy.recommended_amount_display !== "0") {
+        line.appendChild(el("span", null, `₹${policy.recommended_amount_display} over ${policy.tenure_months} months`));
+      }
+      side.appendChild(line);
+    }
+    const challenge = data.model_challenge;
+    if (challenge && challenge.available) {
+      const models = el("div", "models");
+      models.append(el("span", `band ${challenge.scorecard_band.toLowerCase()}`, challenge.scorecard_band),
+                    el("span", null, "scorecard"),
+                    el("span", `band ${challenge.ml_band.toLowerCase()}`, challenge.ml_band),
+                    el("span", null, "learned model"),
+                    el("span", `pill ${challenge.disagrees ? "medium" : "info"}`, challenge.disagrees
+                      ? "Models disagree: refer to a person" : "Models agree"));
+      side.appendChild(models);
+    }
+    risk.appendChild(side);
+    head.appendChild(risk);
+  }
+
   const a = data.applicant;
   if (a) {
     const kyc = el("div", "kyc small");
@@ -1312,26 +1376,7 @@ function renderCaseHead() {
     head.appendChild(el("p", "small muted", "Identity numbers are format-checked only; verify them through your PAN/GST/Udyam checks."));
   }
   (data.applicant_warnings || []).forEach((w) => head.appendChild(el("div", "notice", w)));
-  if (data.failure_reason) {
-    head.appendChild(el("div", "notice error", data.failure_reason));
-  }
-  const challenge = data.model_challenge;
-  if (challenge && challenge.available) {
-    const box = el("div", challenge.disagrees ? "notice" : "notice ok");
-    box.textContent = challenge.disagrees
-      ? `The two risk models disagree: scorecard band ${challenge.scorecard_band} (${(challenge.scorecard_pd * 100).toFixed(1)}%)`
-        + ` against the learned model's band ${challenge.ml_band} (${(challenge.ml_pd * 100).toFixed(1)}%).`
-        + " This case is referred for human assessment."
-      : `Both risk models agree: scorecard band ${challenge.scorecard_band}, learned model band ${challenge.ml_band}`
-        + ` (${(challenge.ml_pd * 100).toFixed(1)}% vs ${(challenge.scorecard_pd * 100).toFixed(1)}%).`;
-    head.appendChild(box);
-  }
-  if (data.policy) {
-    const rec = el("div", "notice ok");
-    rec.textContent = `Recommendation: ${data.policy.outcome.replaceAll("_", " ").toLowerCase()}`
-      + (data.policy.recommended_amount_display !== "0" ? ` · ₹${data.policy.recommended_amount_display} over ${data.policy.tenure_months} months` : "");
-    head.appendChild(rec);
-  }
+  if (data.failure_reason) head.appendChild(el("div", "notice error", data.failure_reason));
 }
 
 const TABS = [["memo", "Memo"], ["integrity", "Integrity"], ["cashflow", "Cash flow"], ["policy", "Policy"],
@@ -1500,15 +1545,18 @@ function renderPanel() {
       positives.forEach((signal) => panel.appendChild(el("p", "small", `${signal.title}. ${signal.explanation}`)));
     }
   } else if (state.tab === "cashflow") {
+    if (data.monthly?.length) {
+      const card = el("div", "chart-card");
+      card.append(el("h3", null, "Month by month"), cashflowChart(data.monthly), chartLegend());
+      panel.appendChild(card);
+    }
     const grid = el("div", "feature-grid");
     Object.entries(data.features).forEach(([key, value]) => {
       const row = el("div");
-      row.append(el("span", null, key.replaceAll("_", " ")), el("b", null, formatFeature(key, value)));
+      row.append(el("span", null, FEATURE_LABELS[key] || key.replaceAll("_", " ")), el("b", null, formatFeature(key, value)));
       grid.appendChild(row);
     });
     panel.appendChild(grid);
-    panel.appendChild(el("h3", null, "Month by month"));
-    panel.appendChild(monthlyBars(data.monthly));
   } else if (state.tab === "policy") {
     if (!data.policy) { panel.appendChild(el("p", "muted", "Policy has not run.")); return; }
     panel.appendChild(el("h3", null, "Scorecard drivers"));
@@ -1645,6 +1693,16 @@ async function askCopilot(question) {
   renderPanel();
 }
 
+const FEATURE_LABELS = {
+  median_monthly_inflow: "Median monthly income", avg_daily_balance: "Average daily balance",
+  monthly_surplus: "Monthly surplus", existing_emi_monthly: "Existing EMIs a month", obligation_ratio: "EMIs / income",
+  inflow_cv: "Income variability", inflow_trend: "Income trend", abb_to_inflow: "Balance / income",
+  digital_share: "Digital income share", cash_deposit_share: "Cash deposit share",
+  low_balance_days_share: "Low-balance days", top_counterparty_share: "Largest payer's share",
+  nach_returns_3m: "Bounced EMIs, 3 months", nach_returns_6m: "Bounced EMIs, 6 months",
+  statement_span_months: "Statement history (months)",
+};
+
 function formatFeature(key, value) {
   if (key.includes("share") || key.includes("ratio") || key === "inflow_cv" || key === "abb_to_inflow" || key === "inflow_trend") {
     return `${(value * 100).toFixed(0)}%`;
@@ -1653,20 +1711,6 @@ function formatFeature(key, value) {
     return `₹${Math.round(value).toLocaleString("en-IN")}`;
   }
   return String(value);
-}
-
-function monthlyBars(monthly) {
-  const wrap = el("div", "bars");
-  const peak = Math.max(...monthly.map((m) => m.inflow), 1);
-  monthly.forEach((month) => {
-    const row = el("div", "bar");
-    const meter = el("i");
-    meter.style.width = `${Math.round((month.inflow / peak) * 100)}%`;
-    row.append(el("span", "small", month.month.slice(5)), meter,
-               el("span", "small", `₹${Math.round(month.inflow / 1000)}k`));
-    wrap.appendChild(row);
-  });
-  return wrap;
 }
 
 /* ------------------------------------------------------------------ document viewer */

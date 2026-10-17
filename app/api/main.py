@@ -1077,7 +1077,7 @@ def _asset_version() -> str:
     import hashlib
 
     digest = hashlib.sha256()
-    for name in ("app.js", "guide.js", "face.js", "ui.js", "styles.css", "index.html"):
+    for name in ("app.js", "guide.js", "face.js", "ui.js", "charts.js", "styles.css", "index.html"):
         digest.update((STATIC_DIR / name).read_bytes())
     return digest.hexdigest()[:12]
 
