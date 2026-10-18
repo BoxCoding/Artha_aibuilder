@@ -346,6 +346,10 @@ main > section > h1:first-child, main > section > .spread:first-child { margin-t
 .bubble { padding: .7rem 1rem; border-radius: 18px; max-width: 62ch; }
 .bubble.me { background: var(--brand-grad); color: #fff; justify-self: end; border-bottom-right-radius: 5px; box-shadow: 0 10px 24px -12px rgba(99, 102, 241, .8); }
 .bubble.bot { background: var(--surface-2); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.bubble p { margin: 0 0 .45rem; }
+.bubble p:last-child { margin-bottom: 0; }
+.md-list { margin: .2rem 0 .5rem; padding-left: 1.1rem; display: grid; gap: .3rem; }
+.bubble code { font-size: .85em; padding: 0 .3rem; border-radius: 5px; background: var(--brand-wash); }
 .chips { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .chips button { background: var(--brand-wash); color: var(--ink); border-color: rgba(167, 139, 250, .25); padding: .34rem .85rem; font-size: .85rem; font-weight: 500; }
 .chips button:hover { border-color: var(--brand); color: var(--ink); box-shadow: 0 0 16px -4px rgba(167, 139, 250, .6); }

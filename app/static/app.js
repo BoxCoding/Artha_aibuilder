@@ -1653,11 +1653,37 @@ function copilotQuestions() {
   return picker.root;
 }
 
+/* The model answers in light markdown: paragraphs, "* " bullets, **bold** and `code`. Built as nodes, never
+   as HTML, so nothing in an answer can become markup. */
+function markdownLite(text) {
+  const inline = (line, parent) => {
+    line.split(/(\*\*[^*]+\*\*|`[^`]+`)/).filter(Boolean).forEach((part) => {
+      if (part.startsWith("**") && part.endsWith("**")) parent.appendChild(el("b", null, part.slice(2, -2)));
+      else if (part.startsWith("`") && part.endsWith("`")) parent.appendChild(el("code", null, part.slice(1, -1)));
+      else parent.appendChild(document.createTextNode(part));
+    });
+    return parent;
+  };
+  const out = document.createDocumentFragment();
+  let list = null;
+  text.split(/\n+|(?=\s\*\s+\*\*)/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+    const item = line.match(/^[*-]\s+(.*)$/);
+    if (item) {
+      if (!list) list = out.appendChild(el("ul", "md-list"));
+      list.appendChild(inline(item[1], el("li")));
+    } else {
+      list = null;
+      out.appendChild(inline(line, el("p")));
+    }
+  });
+  return out;
+}
+
 function copilotTurn(turn) {
   const wrap = el("div");
   wrap.appendChild(el("div", "bubble me", turn.question));
   const answer = el("div", "bubble bot");
-  answer.appendChild(el("p", null, turn.text));
+  answer.appendChild(markdownLite(turn.text));
   if (turn.evidence_ids && turn.evidence_ids.length) {
     const cites = el("div", "cites");
     turn.evidence_ids.slice(0, 6).forEach((id) => {
