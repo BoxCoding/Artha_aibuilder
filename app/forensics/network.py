@@ -53,8 +53,8 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
     if not matches:
         return []
 
-    def others(kind: str, same_owner: bool) -> set[str]:
-        return {m["case_id"] for m in matches if m["kind"] == kind and (m["owner_hash"] == owner) == same_owner}
+    def others(kind: str) -> set[str]:  # earlier applications by a different applicant
+        return {m["case_id"] for m in matches if m["kind"] == kind and m["owner_hash"] != owner}
 
     ev_id = "ev-network"
     if case.documents:
@@ -64,7 +64,7 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
     header = [f"ev-{d.doc_id}-header" for d in case.documents if f"ev-{d.doc_id}-header" in case.evidence]
     signals: list[Signal] = []
 
-    reused = others("doc", same_owner=False)
+    reused = others("doc")
     if reused:
         signals.append(Signal(
             signal_id="sig-fr-xapp-001-0", code="FR-XAPP-001", category="FRAUD", severity="HIGH", confidence=0.9,
@@ -72,7 +72,7 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
             title="Same statement file in another applicant's application",
             explanation=(f"The identical statement file was submitted in {len(reused)} other application(s) by a "
                          "different applicant. A genuine statement belongs to one account holder.")))
-    shared_account = others("account", same_owner=False)
+    shared_account = others("account")
     if shared_account:
         signals.append(Signal(
             signal_id="sig-fr-xapp-002-0", code="FR-XAPP-002", category="FRAUD", severity="MEDIUM", confidence=0.65,
@@ -80,7 +80,7 @@ def network_signals(case: Case, store) -> list[Signal]:  # type: ignore[no-untyp
             title="Bank account used by another applicant",
             explanation=(f"The same bank account appears in {len(shared_account)} application(s) from a different "
                          "PAN. Family businesses sometimes share accounts; confirm who operates it.")))
-    shared_mobile = others("mobile", same_owner=False)
+    shared_mobile = others("mobile")
     if shared_mobile:
         signals.append(Signal(
             signal_id="sig-fr-xapp-003-0", code="FR-XAPP-003", category="FRAUD", severity="MEDIUM", confidence=0.55,

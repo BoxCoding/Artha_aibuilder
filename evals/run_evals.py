@@ -21,7 +21,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,16 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.ai.bundle import build_bundle  # noqa: E402
 from app.ai.gateway import LLMGateway, UsageMeter  # noqa: E402
 from app.ai.memo import deterministic_critic, write_and_review  # noqa: E402
-from app.cashflow.categorise import apply_rules  # noqa: E402
-from app.cashflow.features import add_computed_evidence, cashflow_signals, compute_features  # noqa: E402
+from app.cashflow.features import cashflow_signals  # noqa: E402
 from app.config import Settings  # noqa: E402
-from app.documents.ingest import attach_parsed_statement  # noqa: E402
-from app.documents.pdf_reader import read_statement  # noqa: E402
 from app.domain.models import Case, Outcome  # noqa: E402
-from app.forensics.rules import run_rules  # noqa: E402
+from app.forensics.red_team import offline_case  # noqa: E402
 from app.risk.engine import apply_policy, score  # noqa: E402
-from app.security.injection import detect  # noqa: E402
-from app.synthetic.generator import Statement, random_population, render_pdf  # noqa: E402
+from app.synthetic.generator import Statement, random_population  # noqa: E402
 
 GATES = {
     "tamper_recall": 0.90,
@@ -74,17 +69,8 @@ class Totals:
 
 def analyse(statement: Statement, index: int) -> tuple[Case, list[str], float]:
     started = time.monotonic()
-    data = render_pdf(statement)
-    parsed = read_statement(data)
-    case = Case(case_id=f"eval-{index}", owner_uid="eval", business_name=f"Eval {index}",
-                requested_amount=Decimal("500000"), tenure_months=24)
-    attach_parsed_statement(case, "d1", "s.pdf", data, parsed, "gemini" if parsed.needs_ai else "template")
-    for txn in case.transactions:
-        txn.redacted = bool(detect(txn.narration))
-    apply_rules(case.transactions)
-    case.features, case.monthly = compute_features(case)
-    add_computed_evidence(case)
-    case.signals = run_rules(case) + cashflow_signals(case)
+    case, _ = offline_case(statement, f"eval-{index}", f"Eval {index}")
+    case.signals += cashflow_signals(case)
     case.score = score(case.features)
     case.policy = apply_policy(case.features, case.signals, case.score, case.requested_amount, case.tenure_months)
     codes = [s.code for s in case.signals]

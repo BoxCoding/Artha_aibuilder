@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.ai.explain import INTERNAL_TERMS, NUMBER
 from app.ai.gateway import LLMGateway, LLMUnavailable, UsageMeter
 from app.cashflow.categorise import BUSINESS_CREDIT
+from app.cashflow.features import month_key
 from app.domain.formatting import inr
 from app.domain.models import Case, Transaction
 from app.security.injection import detect
@@ -684,10 +685,6 @@ def _amount_of(t: Transaction) -> Decimal:
     return t.credit if t.credit > 0 else t.debit
 
 
-def _month_key(d: date) -> str:
-    return f"{d.year}-{d.month:02d}"
-
-
 def _month_name(key: str, lang: str) -> str:
     year, month = int(key[:4]), int(key[5:])
     names = {"en": calendar.month_name[month],
@@ -698,7 +695,7 @@ def _month_name(key: str, lang: str) -> str:
 
 
 def _day(d: date, lang: str) -> str:
-    return f"{d.day} {_month_name(_month_key(d), lang)}"
+    return f"{d.day} {_month_name(month_key(d), lang)}"
 
 
 class StatementQA:
@@ -721,7 +718,7 @@ class StatementQA:
     def _coverage(self) -> dict[str, float]:
         days: dict[str, int] = defaultdict(int)
         for i in range((self.end - self.start).days + 1):
-            days[_month_key(self.start + timedelta(days=i))] += 1
+            days[month_key(self.start + timedelta(days=i))] += 1
         return {m: n / calendar.monthrange(int(m[:4]), int(m[5:]))[1] for m, n in days.items()}
 
     def _party_unknown(self, q: Query) -> bool:
@@ -792,7 +789,7 @@ class StatementQA:
         if q.period == "day" and q.start:
             return t["period_day"].format(x=_day(q.start, self.lang))
         if q.period == "month" and q.start:
-            return t["period_month"].format(x=_month_name(_month_key(q.start), self.lang))
+            return t["period_month"].format(x=_month_name(month_key(q.start), self.lang))
         if q.period == "range" and q.start and q.end:
             return t["period_range"].format(a=_day(max(q.start, self.start), self.lang), b=_day(min(q.end, self.end), self.lang))
         return ""
@@ -1040,9 +1037,9 @@ class StatementQA:
         rows = self._select(q)
         coverage = self._coverage()
         totals: dict[str, Decimal] = {m: Decimal("0") for m in coverage
-                                      if (not q.start or m >= _month_key(q.start)) and (not q.end or m <= _month_key(q.end))}
+                                      if (not q.start or m >= month_key(q.start)) and (not q.end or m <= month_key(q.end))}
         for r in rows:
-            totals[_month_key(r.txn_date)] = totals.get(_month_key(r.txn_date), Decimal("0")) + _amount_of(r)
+            totals[month_key(r.txn_date)] = totals.get(month_key(r.txn_date), Decimal("0")) + _amount_of(r)
         full = [m for m in sorted(totals) if coverage.get(m, 0) >= FULL_MONTH]
         partial = [m for m in sorted(totals) if coverage.get(m, 0) < FULL_MONTH]
         return totals, full, partial, rows
@@ -1053,7 +1050,7 @@ class StatementQA:
         if not rows or not full:
             return self._done(self.t["none"].format(what=what, period=period), [], {})
         monthly = sum((totals[m] for m in full), Decimal("0")) / len(full)
-        in_full = [r for r in rows if _month_key(r.txn_date) in full]
+        in_full = [r for r in rows if month_key(r.txn_date) in full]
         each = sum((_amount_of(r) for r in in_full), Decimal("0")) / max(1, len(in_full))
         text = self.t["average"].format(what=what, monthly=_money(monthly), months=len(full), period=period, each=_money(each))
         return self._done(text.replace("  ", " "), in_full, {"monthly_average": float(monthly), "per_transaction": float(each),
@@ -1070,7 +1067,7 @@ class StatementQA:
         if partial:
             text += self.t["partial"].format(months=", ".join(_month_name(m, self.lang) for m in partial))
         text += " " + self.t["monthly"].format(months=", ".join(f"{_month_name(m, self.lang)} ₹{_money(totals[m])}" for m in full))
-        month_rows = [r for r in rows if _month_key(r.txn_date) == pick]
+        month_rows = [r for r in rows if month_key(r.txn_date) == pick]
         return self._done(text, month_rows, {"month": pick, "amount": float(totals[pick]),
                                              "by_month": {m: float(totals[m]) for m in full}})
 
@@ -1137,7 +1134,7 @@ class StatementQA:
         charges = [r for r in in_range if r.category == "return_charges"]
         parts = []
         if bounces:
-            months = sorted({_month_key(r.txn_date) for r in bounces})
+            months = sorted({month_key(r.txn_date) for r in bounces})
             parts.append(self.t["health_bounce"].format(n=len(bounces), period=period,
                                                         months=", ".join(_month_name(m, self.lang) for m in months)))
         else:
@@ -1148,7 +1145,7 @@ class StatementQA:
         income_by_month: dict[str, Decimal] = defaultdict(Decimal)
         for r in self.txns:
             if r.credit > 0 and r.category in BUSINESS_CREDIT:
-                income_by_month[_month_key(r.txn_date)] += r.credit
+                income_by_month[month_key(r.txn_date)] += r.credit
         median_income = statistics.median(income_by_month.values()) if income_by_month else Decimal("0")
         threshold = max(Decimal("2000"), Decimal(str(median_income)) * Decimal("0.05"))
         daily = {d: b for d, b in self._daily_balances().items()

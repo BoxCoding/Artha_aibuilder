@@ -30,7 +30,6 @@ from app.documents.ingest import attach_parsed_statement
 from app.documents.pdf_reader import read_statement
 from app.domain.models import Case
 from app.forensics.rules import run_rules
-from app.security.injection import detect
 from app.synthetic.generator import (Profile, Statement, add_injection, mark_editor_resave, render_pdf,
                                      statement_for)
 
@@ -152,20 +151,25 @@ def _inflate_exact(statement: Statement, rng: random.Random, attack: Attack) -> 
     statement.labels.tamper_types.append(attack.pattern)
 
 
-def run_attack(attack: Attack, seed: int) -> AttackResult:
-    """Forge, then run the production detectors over the result."""
-    statement = _forge(attack, seed)
+def offline_case(statement: Statement, case_id: str, business: str = "Test Co", amount: int = 500000,
+                 tenure: int = 24) -> tuple[Case, bytes]:
+    """Render a statement and run the pipeline's deterministic steps over it (read, categorise, features,
+    forensic rules); no model is called. Shared by the red team, the evaluation suite and the tests."""
     data = render_pdf(statement)
     parsed = read_statement(data)
-    case = Case(case_id=f"red-{seed}", owner_uid="redteam", business_name="Red team",
-                requested_amount=Decimal("500000"), tenure_months=24)
-    attach_parsed_statement(case, "d1", "forged.pdf", data, parsed, "template")
-    for txn in case.transactions:
-        txn.redacted = bool(detect(txn.narration))
+    case = Case(case_id=case_id, owner_uid="offline", business_name=business, requested_amount=Decimal(amount),
+                tenure_months=tenure)
+    attach_parsed_statement(case, "d1", "statement.pdf", data, parsed, "gemini" if parsed.needs_ai else "template")
     apply_rules(case.transactions)
     case.features, case.monthly = compute_features(case)
     add_computed_evidence(case)
     case.signals = run_rules(case)
+    return case, data
+
+
+def run_attack(attack: Attack, seed: int) -> AttackResult:
+    """Forge, then run the production detectors over the result."""
+    case, _ = offline_case(_forge(attack, seed), f"red-{seed}", "Red team")
     fraud = [s for s in case.signals if s.category == "FRAUD" and s.corroborated]
     severe = [s for s in fraud if s.severity in SEVERE]
     lift = (attack.magnitude * attack.rows) / max(1.0, case.features["median_monthly_inflow"] * 6)

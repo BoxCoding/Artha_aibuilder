@@ -11,7 +11,7 @@ from app.cashflow.categorise import BUSINESS_CREDIT, DIGITAL_CREDIT
 from app.domain.models import Case, Evidence, Signal, Transaction
 
 
-def _month_key(d: date) -> str:
+def month_key(d: date) -> str:
     return f"{d.year}-{d.month:02d}"
 
 
@@ -40,7 +40,7 @@ def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str |
     header = case.documents[0].header
     start = header.period_from or txns[0].txn_date
     end = header.period_to or txns[-1].txn_date
-    months = sorted({_month_key(start + timedelta(days=i)) for i in range((end - start).days + 1)})
+    months = sorted({month_key(start + timedelta(days=i)) for i in range((end - start).days + 1)})
 
     inflow: dict[str, Decimal] = defaultdict(Decimal)
     opex: dict[str, Decimal] = defaultdict(Decimal)
@@ -49,7 +49,7 @@ def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str |
     cash = digital = Decimal("0")
     counterparties: dict[str, Decimal] = defaultdict(Decimal)
     for t in txns:
-        m = _month_key(t.txn_date)
+        m = month_key(t.txn_date)
         if t.credit > 0 and t.category in BUSINESS_CREDIT:
             inflow[m] += t.credit
             cash += t.credit if t.category == "cash_deposit" else 0
@@ -95,7 +95,7 @@ def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str |
     }
     monthly = [{
         "month": m, "inflow": float(inflow[m]), "outflow": float(opex[m] + max(emi[m], Decimal("0"))),
-        "avg_balance": round(statistics.fmean([v for d, v in daily.items() if _month_key(d) == m] or [0.0]), 2),
+        "avg_balance": round(statistics.fmean([v for d, v in daily.items() if month_key(d) == m] or [0.0]), 2),
         "nach_returns": float(returns[m]),
     } for m in months]
     return features, monthly

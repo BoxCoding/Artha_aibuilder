@@ -466,8 +466,6 @@ main > section > h1:first-child, main > section > .spread:first-child { margin-t
 .legend .in { background: var(--brand-grad); }
 .legend .out { background: var(--brand-3); opacity: .6; }
 .legend .bal { background: var(--amber); border-radius: 50%; }
-.spark-line { fill: none; stroke: var(--brand-2); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.spark-area { fill: url(#grad-spark); opacity: .45; }
 
 /* ---------------------------------------------------------------- document viewer */
 .viewer { position: sticky; top: calc(var(--head-h) + 1rem); overflow: hidden; }

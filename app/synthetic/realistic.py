@@ -24,6 +24,8 @@ from pathlib import Path
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+from app.domain.formatting import inr
+
 TWO = Decimal("0.01")
 
 
@@ -158,21 +160,6 @@ def build_rows(p: Profile, start: date, months: int, seed: int) -> tuple[Decimal
 
 # --------------------------------------------------------------------------- rendering
 
-def inr(v: Decimal) -> str:
-    sign = "-" if v < 0 else ""
-    whole, frac = f"{abs(v):.2f}".split(".")
-    if len(whole) > 3:
-        head, tail = whole[:-3], whole[-3:]
-        groups = []
-        while len(head) > 2:
-            groups.insert(0, head[-2:])
-            head = head[:-2]
-        if head:
-            groups.insert(0, head)
-        whole = ",".join(groups + [tail])
-    return f"{sign}{whole}.{frac}"
-
-
 def _wrap(text: str, width: int) -> list[str]:
     out, line = [], ""
     for chunk in text.replace("/", "/ ").split():
@@ -260,7 +247,7 @@ def render(p: Profile, opening: Decimal, rows: list[Row], *, producer: str = "Co
     c.setFont("Helvetica", 7.3)
     if not spec.get("newest_first"):
         c.drawString(spec["narr_x"], y, "Opening Balance")
-        c.drawRightString(575, y, inr(opening))
+        c.drawRightString(575, y, inr(opening, 2))
         y -= 13
 
     for r in ordered:
@@ -286,17 +273,17 @@ def render(p: Profile, opening: Decimal, rows: list[Row], *, producer: str = "Co
             c.drawString(302, y, r.ref[-10:])
         c.setFont(r.font, 7.3)
         if p.layout == "kotak_like":
-            c.drawRightString(470, y, inr(r.debit or r.credit))
+            c.drawRightString(470, y, inr(r.debit or r.credit, 2))
             c.setFont("Helvetica", 7.3)
             c.drawString(482, y, "DR" if r.debit else "CR")
         else:
             debit_x, credit_x = (spec["cols"][-3][0], spec["cols"][-2][0])
             if r.debit:
-                c.drawRightString(debit_x, y, inr(r.debit))
+                c.drawRightString(debit_x, y, inr(r.debit, 2))
             if r.credit:
-                c.drawRightString(credit_x, y, inr(r.credit))
+                c.drawRightString(credit_x, y, inr(r.credit, 2))
         c.setFont("Helvetica", 7.3)
-        c.drawRightString(575, y, f"{inr(r.balance)}(Cr)" if p.layout == "kotak_like" else inr(r.balance))
+        c.drawRightString(575, y, f"{inr(r.balance, 2)}(Cr)" if p.layout == "kotak_like" else inr(r.balance, 2))
         for i, part in enumerate(lines):
             c.drawString(spec["narr_x"], y - 9 * i, part)
         y -= 9 * len(lines) + 4
@@ -316,7 +303,7 @@ def render(p: Profile, opening: Decimal, rows: list[Row], *, producer: str = "Co
     for i, (k, v) in enumerate([("Opening Balance", opening), ("Total Credits", credits), ("Total Debits", debits),
                                 ("Closing Balance", rows[-1].balance)]):
         c.drawString(36 + i * 135, y - 32, k)
-        c.drawString(36 + i * 135, y - 42, inr(v))
+        c.drawString(36 + i * 135, y - 42, inr(v, 2))
     c.drawString(36, y - 58, f"Dr Count {sum(1 for r in rows if r.debit)}    Cr Count {sum(1 for r in rows if r.credit)}")
     footer()
     c.showPage()

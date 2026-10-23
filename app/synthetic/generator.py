@@ -16,6 +16,8 @@ from pypdf import PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+from app.domain.formatting import inr
+
 TWO_PLACES = Decimal("0.01")
 PAGE_W, PAGE_H = A4
 ROWS_PER_PAGE = 36
@@ -28,22 +30,6 @@ NARRATION_MAX = 44
 
 def q(value: float | Decimal) -> Decimal:
     return Decimal(str(value)).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-
-
-def fmt_inr(amount: Decimal) -> str:
-    """Format using Indian digit grouping, e.g. 12,34,567.89."""
-    sign = "-" if amount < 0 else ""
-    whole, frac = f"{abs(amount):.2f}".split(".")
-    if len(whole) > 3:
-        head, tail = whole[:-3], whole[-3:]
-        groups = []
-        while len(head) > 2:
-            groups.insert(0, head[-2:])
-            head = head[:-2]
-        if head:
-            groups.insert(0, head)
-        whole = ",".join(groups + [tail])
-    return f"{sign}{whole}.{frac}"
 
 
 @dataclass
@@ -248,7 +234,7 @@ def render_pdf(st: Statement) -> bytes:
         if p == 0:
             c.setFont(BODY_FONT, BODY_SIZE)
             c.drawString(COLS["narration"], y, "Opening Balance")
-            c.drawRightString(COLS["balance_r"], y, fmt_inr(st.opening_balance))
+            c.drawRightString(COLS["balance_r"], y, inr(st.opening_balance, 2))
             y -= ROW_H
         for row in st.rows[p * ROWS_PER_PAGE:(p + 1) * ROWS_PER_PAGE]:
             c.setFont(BODY_FONT, BODY_SIZE)
@@ -258,10 +244,10 @@ def render_pdf(st: Statement) -> bytes:
             font, size = row.amount_font or (BODY_FONT, BODY_SIZE)
             c.setFont(font, size)
             if row.debit:
-                c.drawRightString(COLS["debit_r"], y, fmt_inr(row.debit))
+                c.drawRightString(COLS["debit_r"], y, inr(row.debit, 2))
             if row.credit:
-                c.drawRightString(COLS["credit_r"], y, fmt_inr(row.credit))
-            c.drawRightString(COLS["balance_r"], y, fmt_inr(row.balance))
+                c.drawRightString(COLS["credit_r"], y, inr(row.credit, 2))
+            c.drawRightString(COLS["balance_r"], y, inr(row.balance, 2))
             c.setStrokeColorRGB(0.86, 0.88, 0.9)
             c.line(36, y - 5, PAGE_W - 30, y - 5)
             y -= ROW_H

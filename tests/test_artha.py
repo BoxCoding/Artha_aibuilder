@@ -14,14 +14,12 @@ from fastapi.testclient import TestClient
 from tests.fixtures import APPLICANT
 
 from app.api.main import app
-from app.cashflow.categorise import apply_rules
-from app.cashflow.features import add_computed_evidence, compute_features
-from app.documents.ingest import attach_parsed_statement
 from app.documents.pdf_reader import read_statement
 from app.domain.formatting import emi, inr
 from app.domain.models import Case, Outcome
 from app.domain.store import CaseNotFound, InMemoryStore, get_store
-from app.forensics.rules import reconcile, run_rules
+from app.forensics.red_team import offline_case
+from app.forensics.rules import reconcile
 from app.risk.engine import annuity_principal, apply_policy, improvement_plan, load_policy, score
 from app.security.injection import detect
 from app.security.masking import mask_text
@@ -30,16 +28,7 @@ from app.synthetic.generator import (PERSONAS, add_injection, persona_statement,
 
 
 def build_case(statement, business="Test Co", amount=300000, tenure=24) -> tuple[Case, bytes]:
-    data = render_pdf(statement)
-    parsed = read_statement(data)
-    case = Case(case_id="c-test", owner_uid="u", business_name=business, requested_amount=Decimal(amount),
-                tenure_months=tenure)
-    attach_parsed_statement(case, "d1", "s.pdf", data, parsed, "template")
-    apply_rules(case.transactions)
-    case.features, case.monthly = compute_features(case)
-    add_computed_evidence(case)
-    case.signals = run_rules(case)
-    return case, data
+    return offline_case(statement, "c-test", business, amount, tenure)
 
 
 # --------------------------------------------------------------------------- extraction
