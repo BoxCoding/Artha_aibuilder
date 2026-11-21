@@ -50,6 +50,11 @@ OUTCOME_TO_STATUS: dict[Outcome, CaseStatus] = {
     Outcome.DECLINE: CaseStatus.DECLINED,
 }
 
+# Only applications nobody has decided may be swept. A decided case (or one awaiting its second
+# approver) is a lending record that KYC and anti-money-laundering rules require the lender to keep.
+SWEEPABLE_STATUSES = frozenset({CaseStatus.DRAFT, CaseStatus.PROCESSING, CaseStatus.READY_FOR_REVIEW,
+                                CaseStatus.NEEDS_MANUAL_PROCESSING})
+
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")

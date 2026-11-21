@@ -16,7 +16,7 @@ from tests.fixtures import APPLICANT
 from app.api.main import app
 from app.documents.pdf_reader import read_statement
 from app.domain.formatting import emi, inr
-from app.domain.models import Case, Outcome
+from app.domain.models import Case, CaseStatus, Outcome
 from app.domain.store import CaseNotFound, InMemoryStore, get_store
 from app.forensics.red_team import offline_case
 from app.forensics.rules import reconcile
@@ -393,6 +393,21 @@ def test_override_requires_a_reason_and_large_approvals_need_two_people(client: 
     assert second.json()["status"] == "recorded"
     decision = client.get(f"/api/cases/{case_id}").json()["decision"]
     assert decision["decided_by"] != decision["second_approver"]
+
+
+def test_approving_above_the_recommended_amount_needs_a_reason(client: TestClient) -> None:
+    sign_in(client, "meena@demo.artha")
+    case_id = make_case(client, "meena", 300000)
+    sign_in(client, "arun@demo.artha")
+    policy = client.get(f"/api/cases/{case_id}").json()["policy"]
+    recommended = int(float(policy["recommended_amount"]))
+    assert policy["outcome"] == "APPROVE" and 0 < recommended < 290000  # sizing cut the request
+    body = {"outcome": "APPROVE", "approved_amount": recommended + 10000}
+    refused = client.post(f"/api/cases/{case_id}/decision", json=body)
+    assert refused.status_code == 400 and "more than the recommended amount" in refused.json()["detail"]
+    body["reason"] = "Second income source verified on a site visit."
+    assert client.post(f"/api/cases/{case_id}/decision", json=body).json()["status"] == "recorded"
+    assert client.get(f"/api/cases/{case_id}").json()["decision"]["override"] is True
 
 
 def test_audit_chain_detects_tampering() -> None:
@@ -782,9 +797,14 @@ def test_retention_sweep_spares_nothing_it_should_keep() -> None:
     stale = Case(case_id="stale", owner_uid="u", business_name="Stale", requested_amount=Decimal("100000"),
                  tenure_months=24)
     stale.updated_at = stale.updated_at - timedelta(days=90)
+    decided = Case(case_id="decided", owner_uid="u", business_name="Decided", requested_amount=Decimal("100000"),
+                   tenure_months=24, status=CaseStatus.APPROVED)
+    decided.updated_at = decided.updated_at - timedelta(days=90)
     store.add(fresh)
     store.add(stale)
+    store.add(decided)
     assert store.sweep_expired(max_age_seconds=30 * 86400) == 1
     assert store.get("fresh")
+    assert store.get("decided")  # a decided loan is a record the lender must keep
     with pytest.raises(CaseNotFound):
         store.get("stale")

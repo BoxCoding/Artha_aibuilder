@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from app.domain.models import AuditEvent, Case, CaseStatus
+from app.domain.models import SWEEPABLE_STATUSES, AuditEvent, Case, CaseStatus
 
 
 class CaseNotFound(KeyError):
@@ -257,7 +257,8 @@ class InMemoryStore:
         cutoff = datetime.now(timezone.utc).timestamp() - max_age_seconds
         with self._lock:
             stale = [cid for cid, case in self._cases.items()
-                     if cid not in self._protected and case.updated_at.timestamp() < cutoff]
+                     if cid not in self._protected and case.status in SWEEPABLE_STATUSES
+                     and case.updated_at.timestamp() < cutoff]
         return sum(int(self.delete_case(cid)) for cid in stale)
 
     def audit_events(self, limit: int = 100) -> list[AuditEvent]:

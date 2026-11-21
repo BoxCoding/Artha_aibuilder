@@ -349,6 +349,7 @@ main > section > h1:first-child, main > section > .spread:first-child { margin-t
 .bubble p { margin: 0 0 .45rem; }
 .bubble p:last-child { margin-bottom: 0; }
 .md-list { margin: .2rem 0 .5rem; padding-left: 1.1rem; display: grid; gap: .3rem; }
+.md-h { font-weight: 600; }
 .bubble code { font-size: .85em; padding: 0 .3rem; border-radius: 5px; background: var(--brand-wash); }
 .chips { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .chips button { background: var(--brand-wash); color: var(--ink); border-color: rgba(167, 139, 250, .25); padding: .34rem .85rem; font-size: .85rem; font-weight: 500; }

@@ -13,7 +13,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.fixtures import APPLICANT
+from tests.fixtures import APPLICANT, STRONG
 from sqlalchemy import update
 
 from app.api.main import app
@@ -22,9 +22,6 @@ from app.domain.models import Case, CaseStatus, Role
 from app.domain.users import AccountService, AuthError, InMemoryUserRepository
 
 needs_db = pytest.mark.skipif(not os.environ.get("DATABASE_URL"), reason="needs the SQL store")
-STRONG = "correct horse battery staple"
-
-
 def unique_email() -> str:
     return f"user-{uuid.uuid4().hex[:10]}@example.com"
 

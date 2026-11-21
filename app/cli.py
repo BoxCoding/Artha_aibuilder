@@ -8,7 +8,7 @@
     disable-user EMAIL / enable-user EMAIL   block or restore an account (revokes sessions)
     list-users
     verify-audit                             recompute the audit hash chain; non-zero exit if broken
-    sweep                                    delete cases past the retention window now
+    sweep                                    delete abandoned, undecided cases past the retention window now
     make-statements [--out DIR]              write a pack of realistic synthetic test statements
 """
 from __future__ import annotations

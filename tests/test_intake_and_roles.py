@@ -20,18 +20,7 @@ from app.domain.kyc import ApplicantProfile, valid_gstin
 from app.domain.models import Role
 from app.domain.users import get_accounts
 from tests.bank_layouts import LAYOUTS, make_transactions, render, statement
-from tests.fixtures import APPLICANT
-
-STRONG = "correct horse battery staple"
-
-
-def staff(role: Role) -> TestClient:
-    email = f"{role.value}-{uuid.uuid4().hex[:8]}@lender.example"
-    get_accounts().register(email, f"Test {role.value}", STRONG, role=role)
-    client = TestClient(app)
-    assert client.post("/api/session", json={"email": email, "password": STRONG}).status_code == 200
-    return client
-
+from tests.fixtures import APPLICANT, STRONG, staff
 
 def customer() -> TestClient:
     client = TestClient(app)

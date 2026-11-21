@@ -10,10 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
 
 from app.api.main import app
-from tests.fixtures import APPLICANT
-
-STRONG = "correct horse battery staple"
-
+from tests.fixtures import APPLICANT, STRONG
 
 def register(gender: str | None) -> TestClient:
     client = TestClient(app)

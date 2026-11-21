@@ -21,7 +21,7 @@ from sqlalchemy import Engine, delete, func, insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import audit_log, callbacks, cases, documents, fingerprints, is_postgres, jobs, outbox, sqlite_write_lock
-from app.domain.models import AuditEvent, Case, CaseStatus
+from app.domain.models import SWEEPABLE_STATUSES, AuditEvent, Case, CaseStatus
 from app.domain.store import (GENESIS_HASH, CaseNotFound, build_audit_event, case_summary, first_broken_link,
                               owner_row, queue_row)
 
@@ -217,7 +217,8 @@ class SqlStore:
     def sweep_expired(self, max_age_seconds: int) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
         with self.engine.connect() as conn:
-            stale = conn.execute(select(cases.c.case_id).where(cases.c.updated_at < cutoff)).scalars().all()
+            stale = conn.execute(select(cases.c.case_id).where(
+                cases.c.updated_at < cutoff, cases.c.status.in_([s.value for s in SWEEPABLE_STATUSES]))).scalars().all()
         return sum(int(self.delete_case(cid)) for cid in stale)
 
     # ------------------------------------------------------------------ events (outbox)

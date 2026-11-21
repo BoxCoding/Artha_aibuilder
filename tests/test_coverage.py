@@ -17,21 +17,9 @@ from fastapi.testclient import TestClient
 from app.api.main import app
 from app.config import get_settings
 from app.domain.models import Case, Role, Transaction
-from app.domain.users import get_accounts
 from app.gcp import GcpClient, GcpError, set_gcp
 from tests.bank_layouts import statement
-from tests.fixtures import APPLICANT
-
-STRONG = "correct horse battery staple"
-
-
-def staff(role: Role) -> TestClient:
-    email = f"{role.value}-{uuid.uuid4().hex[:8]}@lender.example"
-    get_accounts().register(email, f"Test {role.value}", STRONG, role=role)
-    client = TestClient(app)
-    assert client.post("/api/session", json={"email": email, "password": STRONG}).status_code == 200
-    return client
-
+from tests.fixtures import APPLICANT, STRONG, staff
 
 def applicant(**over: str) -> dict:
     """A fresh applicant with a unique PAN and mobile, so cross-application checks start clean."""

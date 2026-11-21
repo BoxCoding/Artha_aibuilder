@@ -784,10 +784,6 @@ async def decide(case_id: str, payload: DecisionRequest,
             blockers = approval_blockers(live)
             if blockers:
                 raise HTTPException(status.HTTP_409_CONFLICT, " ".join(blockers))
-        override = outcome != policy.outcome
-        if override and not (payload.reason and payload.reason.strip()):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                                "Give a reason when your decision differs from the recommendation.")
         amount = Decimal(payload.approved_amount) if payload.approved_amount else None
         if outcome.value.startswith("APPROVE"):
             amount = amount or policy.recommended_amount
@@ -797,6 +793,14 @@ async def decide(case_id: str, payload: DecisionRequest,
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "The approved amount cannot exceed the amount requested.")
         else:
             amount = None
+        # Lending more than the policy's affordability sizing is an override too, even with the same outcome.
+        above_sizing = amount is not None and policy.recommended_amount > 0 and amount > policy.recommended_amount
+        override = outcome != policy.outcome or above_sizing
+        if override and not (payload.reason and payload.reason.strip()):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "Give a reason for approving more than the recommended amount."
+                                if outcome == policy.outcome else
+                                "Give a reason when your decision differs from the recommendation.")
 
         four_eyes = amount is not None and amount > Decimal(str(_four_eyes_threshold(live)))
         pending = live.pending_decision

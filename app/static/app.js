@@ -1668,7 +1668,11 @@ function markdownLite(text) {
   let list = null;
   text.split(/\n+|(?=\s\*\s+\*\*)/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
     const item = line.match(/^[*-]\s+(.*)$/);
-    if (item) {
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      list = null;
+      out.appendChild(inline(heading[1], el("p", "md-h")));
+    } else if (item) {
       if (!list) list = out.appendChild(el("ul", "md-list"));
       list.appendChild(inline(item[1], el("li")));
     } else {

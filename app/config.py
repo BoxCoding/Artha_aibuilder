@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     # service generates an ephemeral key and says so: receipts will not verify after a restart.
     receipt_signing_seed: SecretStr | None = None
     receipt_verify_url: str = "/.well-known/ledgerlens-receipt-key.json"
-    case_retention_days: int = 30
+    case_retention_days: int = 30  # abandoned, undecided applications only; decided cases are kept
 
     # Origins allowed to make state-changing requests, comma separated. The service's own origin is
     # always allowed.
