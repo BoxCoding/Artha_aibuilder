@@ -33,7 +33,9 @@ from app.config import get_settings
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
 from app.documents.render import render_crop, render_page_png
-from app.domain.models import (OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Document, Explanation, Outcome, Role)
+from app.domain.models import (DEFAULT_TENANT, OUTCOME_TO_STATUS, Case, CaseStatus, Decision, Document, Explanation,
+                               Outcome, Role)
+from app.domain.tenants import get_tenants
 from app.domain.store import CaseNotFound, get_store
 from app.domain.users import DEMO_ACCOUNTS, AccountExists, AuthError, User, get_accounts
 from app.events import publish_event
@@ -202,18 +204,18 @@ async def sign_in(payload: LoginRequest, request: Request, response: Response) -
     return {"uid": user.uid, "name": user.name, "role": user.role.value}
 
 
-async def _new_account(payload: RegisterRequest | CreateUserRequest, role: Role) -> User:
+async def _new_account(payload: RegisterRequest | CreateUserRequest, role: Role, tenant_id: str) -> User:
     """Raises AccountExists for a taken email, so self-registration can answer it its own way."""
     try:
         return await asyncio.to_thread(get_accounts().register, payload.email, payload.name, payload.password, role,
-                                       payload.gender)
+                                       payload.gender, tenant_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
-async def _staff_account(payload: CreateUserRequest, role: Role) -> User:
+async def _staff_account(payload: CreateUserRequest, role: Role, tenant_id: str) -> User:
     try:
-        return await _new_account(payload, role)
+        return await _new_account(payload, role, tenant_id)
     except AccountExists as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists.") from exc
 
@@ -225,8 +227,11 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
     if not settings.allow_self_registration:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is closed.")
     enforce(f"register-ip:{client_ip(request, settings)}", 5, 3600)
+    lender = await asyncio.to_thread(get_tenants().get, (payload.lender or DEFAULT_TENANT).strip().lower())
+    if lender is None or not lender.active:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This sign-up link is not valid. Ask your lender for a new one.")
     try:
-        user = await _new_account(payload, Role.BORROWER)
+        user = await _new_account(payload, Role.BORROWER, lender.tenant_id)
     except AccountExists as exc:
         get_store().audit("anonymous", "none", "REGISTER_DUPLICATE", "account", {"email_sha": _digest(payload.email)})
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with this email already exists. Sign in instead.") from exc
@@ -256,7 +261,7 @@ async def first_run_setup(payload: CreateUserRequest, request: Request, response
     enforce(f"setup-ip:{client_ip(request, settings)}", 5, 3600)
     if not await asyncio.to_thread(get_accounts().needs_setup):
         raise HTTPException(status.HTTP_409_CONFLICT, "Setup is already complete. Sign in instead.")
-    user = await _staff_account(payload, Role.RISK_ADMIN)
+    user = await _staff_account(payload, Role.RISK_ADMIN, DEFAULT_TENANT)
     issue_session(response, user, settings)
     get_store().audit(user.uid, user.role.value, "FIRST_ADMIN_CREATED", "account", {})
     return {"uid": user.uid, "name": user.name, "role": user.role.value}
@@ -268,7 +273,7 @@ async def list_users(principal: Principal = Depends(require_roles(Role.RISK_ADMI
     return {"users": [{"uid": u.uid, "email": u.email, "name": u.name, "role": u.role.value, "active": u.active,
                        "demo": u.is_demo, "last_login_at": u.last_login_at, "created_at": u.created_at,
                        "locked": bool(u.locked_until and u.locked_until > datetime.now(timezone.utc))}
-                      for u in users]}
+                      for u in users if u.tenant_id == principal.tenant_id]}
 
 
 @app.post("/api/admin/users", status_code=status.HTTP_201_CREATED)
@@ -276,7 +281,7 @@ async def create_user(payload: CreateUserRequest,
                       principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
     """Add a loan officer, credit officer, administrator or customer account."""
     enforce(f"admin-create:{principal.uid}", 30, 3600)
-    user = await _staff_account(payload, payload.role)
+    user = await _staff_account(payload, payload.role, principal.tenant_id)
     get_store().audit(principal.uid, principal.role.value, "ACCOUNT_CREATED", user.uid, {"role": user.role.value})
     return {"uid": user.uid, "email": user.email, "role": user.role.value}
 
@@ -288,6 +293,9 @@ async def change_user(uid: str, action: str,
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found.")
     if uid == principal.uid:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot disable your own account.")
+    target = await asyncio.to_thread(get_accounts().repo.get, uid)
+    if target is None or target.tenant_id != principal.tenant_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
     try:
         await asyncio.to_thread(get_accounts().set_active, uid, action == "enable")
     except KeyError as exc:
@@ -342,7 +350,9 @@ async def me(principal: Principal = Depends(current_principal)) -> dict[str, Any
     settings = get_settings()
     user = await asyncio.to_thread(get_accounts().repo.get, principal.uid)
     gender = user.gender if user else None
+    lender = await asyncio.to_thread(get_tenants().get, principal.tenant_id)
     return {"uid": principal.uid, "name": principal.name, "role": principal.role.value,
+            "lender": {"id": principal.tenant_id, "name": lender.name if lender else principal.tenant_id},
             "gender": gender, "guide_presenter": guide_presenter_for(gender),
             "ai_mode": settings.llm_mode, "ai": await _ai_status() if principal.role != Role.BORROWER else None,
             "languages": settings.supported_languages}
@@ -376,7 +386,7 @@ async def create_case(payload: CreateCaseRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Consent is required before documents can be analysed.")
     assisted = principal.role == Role.LOAN_OFFICER
     applicant = payload.applicant
-    case = Case(case_id=f"case-{uuid.uuid4().hex[:10]}", owner_uid=principal.uid,
+    case = Case(case_id=f"case-{uuid.uuid4().hex[:10]}", owner_uid=principal.uid, tenant_id=principal.tenant_id,
                 business_name=(payload.business_name or applicant.business_name).strip(),
                 requested_amount=Decimal(payload.requested_amount), tenure_months=payload.tenure_months,
                 language=payload.language, applicant=applicant, channel="assisted" if assisted else "self",
@@ -706,7 +716,7 @@ async def request_callback(case_id: str, payload: CallbackRequest,
 
 @app.get("/api/queue")
 async def queue(principal: Principal = Depends(require_roles(Role.UNDERWRITER, Role.RISK_ADMIN))) -> dict[str, Any]:
-    rows = await asyncio.to_thread(get_store().list_queue, get_settings().queue_page_size)
+    rows = await asyncio.to_thread(get_store().list_queue, get_settings().queue_page_size, tenant_id=principal.tenant_id)
     return {"cases": rows}
 
 
@@ -754,7 +764,7 @@ async def copilot(case_id: str, payload: CopilotRequest,
     from app.ai.copilot import ask
 
     store = get_store()
-    case = store.get(case_id)
+    case = _case_for(case_id, principal)
     answer = await ask(case, payload.question, get_gateway())
     store.audit(principal.uid, principal.role.value, "COPILOT_QUERY", case_id,
                 {"author": answer.author, "tools": len(answer.tool_calls)})
@@ -773,6 +783,7 @@ async def decide(case_id: str, payload: DecisionRequest,
     # The whole check-and-set runs under the case's row lock, so two underwriters acting at once
     # cannot both be "first", and nobody can countersign a proposal that has just changed.
     with store.mutate(case_id) as live:
+        authorise_case(live, principal)
         if live.status not in DECIDABLE:
             raise HTTPException(status.HTTP_409_CONFLICT, "This case is not open for a decision.")
         if not live.policy:
@@ -905,6 +916,7 @@ async def clear_compliance(case_id: str, payload: ClearanceRequest,
     """Compliance records that a watchlist match was reviewed and is a false positive (or acceptable)."""
     store = get_store()
     with store.mutate(case_id) as live:
+        authorise_case(live, principal)
         if not any(s.code == payload.code and s.category == "COMPLIANCE" for s in live.signals):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "No such compliance finding on this case.")
         live.compliance_clearances.append({"code": payload.code, "note": payload.note.strip(), "by": principal.uid,
@@ -920,7 +932,7 @@ async def compliance_report(case_id: str, principal: Principal = Depends(
     from app.compliance.checklist import evaluate
 
     store = get_store()
-    case = await asyncio.to_thread(store.get, case_id)
+    case = await asyncio.to_thread(_case_for, case_id, principal)
     trail = await asyncio.to_thread(store.audit_for, case_id)
     return {
         "case_id": case_id, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -957,7 +969,11 @@ async def explanation(case_id: str, language: str = "en",
 @app.get("/api/risk/overview")
 async def risk_overview(principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, Any]:
     store = get_store()
-    summaries = [s for s in await asyncio.to_thread(store.summaries) if s.get("scored")]
+    summaries = [s for s in await asyncio.to_thread(store.summaries, tenant_id=principal.tenant_id) if s.get("scored")]
+    # shortcut: the audit tail is filtered by this lender's account ids, read in full; add a tenant
+    # column to the audit log once a lender has tens of thousands of accounts.
+    staff_and_customers = {u.uid for u in await asyncio.to_thread(get_accounts().repo.list)
+                           if u.tenant_id == principal.tenant_id}
     bands = {b: sum(1 for s in summaries if s.get("band") == b) for b in "ABCDE"}
     outcomes: dict[str, int] = {}
     signal_counts: dict[str, int] = {}
@@ -976,9 +992,10 @@ async def risk_overview(principal: Principal = Depends(require_roles(Role.RISK_A
         "memo_revisions": sum(m["revisions"] for m in memos),
         "claims_dropped_by_gate": sum(m["dropped"] for m in memos),
         "critic_issues_open": sum(m["critic_issues"] for m in memos),
-        "callbacks_requested": await asyncio.to_thread(store.callback_count),
+        "callbacks_requested": await asyncio.to_thread(store.callback_count, tenant_id=principal.tenant_id),
         "audit_chain_valid": await asyncio.to_thread(store.verify_audit_chain),
-        "audit_tail": [e.model_dump(mode="json") for e in await asyncio.to_thread(store.audit_events, 25)],
+        "audit_tail": [e.model_dump(mode="json")
+                       for e in await asyncio.to_thread(store.audit_events, 25, staff_and_customers)],
         "ai_mode": get_settings().llm_mode,
     }
     if get_settings().pipeline_mode == "queue":
@@ -994,9 +1011,9 @@ async def risk_portfolio(principal: Principal = Depends(require_roles(Role.RISK_
     from app.analytics.portfolio import portfolio
 
     store = get_store()
-    summaries = await asyncio.to_thread(store.summaries)
-    result = await asyncio.to_thread(portfolio, summaries)
-    result["events"] = await asyncio.to_thread(store.event_counts)
+    summaries = await asyncio.to_thread(store.summaries, tenant_id=principal.tenant_id)
+    result = await asyncio.to_thread(portfolio, summaries, principal.tenant_id)
+    result["events"] = await asyncio.to_thread(store.event_counts, tenant_id=principal.tenant_id)
     return result
 
 

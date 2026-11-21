@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.config import get_settings
+from app.domain.models import DEFAULT_TENANT
 
 log = logging.getLogger("artha.events")
 events_log = logging.getLogger("artha.events.stream")
@@ -34,9 +35,14 @@ def publish_event(topic: str, key: str, **payload: Any) -> None:
     try:
         from app.domain.store import get_store
 
-        body = {"schema": SCHEMA_VERSION, "topic": topic, "key": key,
+        store = get_store()
+        try:
+            tenant_id = store.get(key).tenant_id  # every event names its lender, for per-lender analytics
+        except KeyError:
+            tenant_id = DEFAULT_TENANT
+        body = {"schema": SCHEMA_VERSION, "topic": topic, "key": key, "tenant_id": tenant_id,
                 "occurred_at": datetime.now(timezone.utc).isoformat(timespec="seconds")} | payload
-        get_store().emit(topic, key, json.loads(json.dumps(body, default=str)))
+        store.emit(topic, key, json.loads(json.dumps(body, default=str)))
     except Exception:  # noqa: BLE001
         log.warning("event_emit_failed", extra={"detail": topic}, exc_info=True)
 

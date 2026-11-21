@@ -98,7 +98,7 @@ def test_events_flow_through_the_outbox_to_pubsub_without_personal_data(gcp_mock
     message = json.loads(calls[-1].content)["messages"][0]
     decoded = json.loads(base64.b64decode(message["data"]))
     assert decoded["schema"] == "ledgerlens.event.v1" and message["attributes"]["event_id"]
-    assert get_store().event_counts()["pending"] == 0 or all(
+    assert get_store().event_counts(tenant_id="default")["pending"] == 0 or all(
         e["key"] != body["case_id"] for e in get_store().pending_events(1000))
 
 
@@ -113,9 +113,9 @@ def test_a_failing_sink_leaves_events_pending() -> None:
             raise RuntimeError("pubsub down")
 
     publish_event("case.submitted", "case-x", case_id="case-x", documents=1)
-    before = get_store().event_counts()["pending"]
+    before = len(get_store().pending_events(10_000))  # "case-x" is not a stored case, so count unscoped
     assert relay_once(sinks=[Broken()]) == 0
-    assert get_store().event_counts()["pending"] == before
+    assert len(get_store().pending_events(10_000)) == before
 
 
 # --------------------------------------------------------------------------- cross-application fraud
@@ -353,7 +353,9 @@ def test_portfolio_analytics_local_and_bigquery(gcp_mock, monkeypatch) -> None:
     monkeypatch.setattr(get_settings(), "bigquery_project", "p")
     result = portfolio(summaries)
     assert result["backend"] == "bigquery" and result["applications"] == 120 and result["approval_rate"] == 0.61
-    assert "`p.ledgerlens.events`" in json.loads(calls[0].content)["query"]
+    sent = json.loads(calls[0].content)
+    assert "`p.ledgerlens.events`" in sent["query"] and "@tenant" in sent["query"]
+    assert sent["queryParameters"][0]["parameterValue"]["value"] == "default"  # one lender's events only
     assert result["cross_application_alerts"]  # case-level alerts still come from the application database
     admin = staff(Role.RISK_ADMIN)
     monkeypatch.setattr(get_settings(), "analytics_backend", "local")

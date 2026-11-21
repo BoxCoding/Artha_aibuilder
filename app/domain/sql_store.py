@@ -12,7 +12,7 @@ Concurrency rules:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -41,7 +41,7 @@ class SqlStore:
     @staticmethod
     def _columns(case: Case) -> dict[str, Any]:
         return {
-            "owner_uid": case.owner_uid, "status": case.status.value, "business_name": case.business_name,
+            "owner_uid": case.owner_uid, "tenant_id": case.tenant_id, "status": case.status.value, "business_name": case.business_name,
             "created_at": case.created_at, "updated_at": case.updated_at,
             "summary": case_summary(case), "document": case.model_dump(mode="json"),
         }
@@ -83,9 +83,9 @@ class SqlStore:
             rows = conn.execute(select(cases.c.document).order_by(cases.c.updated_at.desc())).all()
         return [Case.model_validate(r.document) for r in rows]
 
-    def list_queue(self, limit: int = 200) -> list[dict[str, Any]]:
+    def list_queue(self, limit: int = 200, *, tenant_id: str) -> list[dict[str, Any]]:
         stmt = (select(cases.c.case_id, cases.c.business_name, cases.c.status, cases.c.updated_at, cases.c.summary)
-                .where(cases.c.status != CaseStatus.DRAFT.value)
+                .where(cases.c.status != CaseStatus.DRAFT.value, cases.c.tenant_id == tenant_id)
                 .order_by(cases.c.updated_at.desc()).limit(limit))
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).all()
@@ -105,9 +105,9 @@ class SqlStore:
         with self.engine.connect() as conn:
             return list(conn.execute(select(cases.c.case_id).where(cases.c.status == status.value)).scalars())
 
-    def summaries(self) -> list[dict[str, Any]]:
+    def summaries(self, *, tenant_id: str) -> list[dict[str, Any]]:
         with self.engine.connect() as conn:
-            rows = conn.execute(select(cases.c.case_id, cases.c.summary)).all()
+            rows = conn.execute(select(cases.c.case_id, cases.c.summary).where(cases.c.tenant_id == tenant_id)).all()
         return [dict(r.summary) | {"case_id": r.case_id} for r in rows]
 
     def change_marker(self, case_id: str) -> int:
@@ -146,9 +146,11 @@ class SqlStore:
             rows = conn.execute(select(callbacks).order_by(callbacks.c.id)).all()
         return [{"case_id": r.case_id, "uid": r.uid, "note": r.note, "at": r.at.isoformat()} for r in rows]
 
-    def callback_count(self) -> int:
+    def callback_count(self, *, tenant_id: str) -> int:
+        stmt = (select(func.count()).select_from(callbacks.join(cases, cases.c.case_id == callbacks.c.case_id))
+                .where(cases.c.tenant_id == tenant_id))
         with self.engine.connect() as conn:
-            return int(conn.execute(select(func.count()).select_from(callbacks)).scalar() or 0)
+            return int(conn.execute(stmt).scalar() or 0)
 
     # ------------------------------------------------------------------ audit
     def audit(self, actor: str, role: str, action: str, resource: str, detail: dict[str, object]) -> AuditEvent:
@@ -178,9 +180,12 @@ class SqlStore:
                                 .order_by(audit_log.c.seq.desc()).limit(1)).first()
         return (head.event_hash, int(head.seq)) if head else (GENESIS_HASH, 0)
 
-    def audit_events(self, limit: int = 100) -> list[AuditEvent]:
+    def audit_events(self, limit: int = 100, actors: Collection[str] | None = None) -> list[AuditEvent]:
+        stmt = select(audit_log).order_by(audit_log.c.seq.desc()).limit(limit)
+        if actors is not None:
+            stmt = stmt.where(audit_log.c.actor.in_(list(actors)))
         with self.engine.connect() as conn:
-            rows = conn.execute(select(audit_log).order_by(audit_log.c.seq.desc()).limit(limit)).all()
+            rows = conn.execute(stmt).all()
         return [AuditEvent(seq=r.seq, at=datetime.fromisoformat(r.at), actor=r.actor, role=r.role, action=r.action,
                            resource=r.resource, detail_hash=r.detail_hash, prev_hash=r.prev_hash,
                            event_hash=r.event_hash) for r in reversed(rows)]
@@ -243,11 +248,12 @@ class SqlStore:
         with self._write_guard(), self.engine.begin() as conn:
             conn.execute(update(outbox).where(outbox.c.id.in_(ids)).values(**values))
 
-    def event_counts(self) -> dict[str, int]:
+    def event_counts(self, *, tenant_id: str) -> dict[str, int]:
+        mine = (select(func.count()).select_from(outbox.join(cases, cases.c.case_id == outbox.c.key))
+                .where(cases.c.tenant_id == tenant_id))
         with self.engine.connect() as conn:
-            total = int(conn.execute(select(func.count()).select_from(outbox)).scalar() or 0)
-            pending = int(conn.execute(select(func.count()).select_from(outbox)
-                                       .where(outbox.c.published_at.is_(None))).scalar() or 0)
+            total = int(conn.execute(mine).scalar() or 0)
+            pending = int(conn.execute(mine.where(outbox.c.published_at.is_(None))).scalar() or 0)
         return {"published": total - pending, "pending": pending}
 
     # ------------------------------------------------------------------ fingerprints
@@ -265,8 +271,12 @@ class SqlStore:
         from sqlalchemy import and_, or_
 
         clause = or_(*[and_(fingerprints.c.kind == k, fingerprints.c.value_hash == v) for k, v in items])
+        # Only within the same lender: one lender's applicants are never matched against another's.
+        same_lender = select(cases.c.tenant_id).where(cases.c.case_id == case_id).scalar_subquery()
+        stmt = (select(fingerprints).join(cases, cases.c.case_id == fingerprints.c.case_id)
+                .where(clause, fingerprints.c.case_id != case_id, cases.c.tenant_id == same_lender))
         with self.engine.connect() as conn:
-            rows = conn.execute(select(fingerprints).where(clause, fingerprints.c.case_id != case_id)).all()
+            rows = conn.execute(stmt).all()
         return [{"case_id": r.case_id, "kind": r.kind, "value_hash": r.value_hash, "owner_hash": r.owner_hash,
                  "created_at": r.created_at} for r in rows]
 

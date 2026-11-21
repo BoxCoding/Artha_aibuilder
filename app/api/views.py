@@ -31,6 +31,7 @@ class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     password: str = Field(min_length=1, max_length=256)
     gender: str | None = Field(default=None, max_length=20)  # optional; video guide presenter only
+    lender: str | None = Field(default=None, max_length=40)  # from the lender's sign-up link; default lender if absent
 
 
 class ProfileRequest(BaseModel):

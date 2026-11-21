@@ -16,7 +16,7 @@ import hashlib
 import json
 import threading
 from collections import OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -90,20 +90,20 @@ class CaseStore(Protocol):
     def get(self, case_id: str) -> Case: ...
     def mutate(self, case_id: str) -> Any: ...
     def list(self) -> list[Case]: ...
-    def list_queue(self, limit: int) -> list[dict[str, Any]]: ...
+    def list_queue(self, limit: int = 200, *, tenant_id: str) -> list[dict[str, Any]]: ...
     def list_for_owner(self, owner_uid: str, limit: int = 50,
                        include_assessment: bool = False) -> list[dict[str, Any]]: ...
-    def summaries(self) -> list[dict[str, Any]]: ...
+    def summaries(self, *, tenant_id: str) -> list[dict[str, Any]]: ...
     def ids_with_status(self, status: CaseStatus) -> list[str]: ...
     def change_marker(self, case_id: str) -> int: ...
     def put_file(self, case_id: str, doc_id: str, data: bytes) -> None: ...
     def get_file(self, case_id: str, doc_id: str) -> bytes: ...
     def add_callback(self, record: dict[str, str]) -> None: ...
     def callbacks(self) -> list[dict[str, str]]: ...
-    def callback_count(self) -> int: ...
+    def callback_count(self, *, tenant_id: str) -> int: ...
     def audit(self, actor: str, role: str, action: str, resource: str, detail: dict[str, object]) -> AuditEvent: ...
     def audit_head(self) -> tuple[str, int]: ...
-    def audit_events(self, limit: int = 100) -> list[AuditEvent]: ...
+    def audit_events(self, limit: int = 100, actors: Collection[str] | None = None) -> list[AuditEvent]: ...
     def verify_audit_chain(self) -> bool: ...
     def audit_for(self, case_id: str, limit: int = 500) -> list[AuditEvent]: ...
     def delete_case(self, case_id: str) -> bool: ...
@@ -113,7 +113,7 @@ class CaseStore(Protocol):
     def emit(self, topic: str, key: str, payload: dict[str, Any]) -> None: ...
     def pending_events(self, limit: int = 100) -> list[dict[str, Any]]: ...
     def mark_events(self, ids: list[int], published: bool) -> None: ...
-    def event_counts(self) -> dict[str, int]: ...
+    def event_counts(self, *, tenant_id: str) -> dict[str, int]: ...
     def set_fingerprints(self, case_id: str, owner_hash: str, items: list[tuple[str, str]]) -> None: ...
     def match_fingerprints(self, case_id: str, items: list[tuple[str, str]]) -> list[dict[str, Any]]: ...
 
@@ -171,9 +171,9 @@ class InMemoryStore:
         with self._lock:
             return list(self._cases.values())
 
-    def list_queue(self, limit: int = 200) -> list[dict[str, Any]]:
+    def list_queue(self, limit: int = 200, *, tenant_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            live = sorted((c for c in self._cases.values() if c.status != CaseStatus.DRAFT),
+            live = sorted((c for c in self._cases.values() if c.status != CaseStatus.DRAFT and c.tenant_id == tenant_id),
                           key=lambda c: c.updated_at, reverse=True)[:limit]
             return [queue_row(c.case_id, c.business_name, c.status.value, c.updated_at, case_summary(c))
                     for c in live]
@@ -186,9 +186,9 @@ class InMemoryStore:
             return [owner_row(c.case_id, c.business_name, c.status.value, c.created_at, c.updated_at,
                               case_summary(c), include_assessment) for c in mine]
 
-    def summaries(self) -> list[dict[str, Any]]:
+    def summaries(self, *, tenant_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            return [case_summary(c) | {"case_id": c.case_id} for c in self._cases.values()]
+            return [case_summary(c) | {"case_id": c.case_id} for c in self._cases.values() if c.tenant_id == tenant_id]
 
     def ids_with_status(self, status: CaseStatus) -> list[str]:
         with self._lock:
@@ -221,9 +221,13 @@ class InMemoryStore:
         with self._lock:
             return list(self._callbacks)
 
-    def callback_count(self) -> int:
+    def callback_count(self, *, tenant_id: str) -> int:
         with self._lock:
-            return len(self._callbacks)
+            return sum(1 for r in self._callbacks if self._tenant_of(r["case_id"]) == tenant_id)
+
+    def _tenant_of(self, case_id: str) -> str | None:
+        case = self._cases.get(case_id)
+        return case.tenant_id if case else None
 
     # ------------------------------------------------------------------ audit (hash-chained, append-only)
     def audit(self, actor: str, role: str, action: str, resource: str, detail: dict[str, object]) -> AuditEvent:
@@ -261,9 +265,10 @@ class InMemoryStore:
                      and case.updated_at.timestamp() < cutoff]
         return sum(int(self.delete_case(cid)) for cid in stale)
 
-    def audit_events(self, limit: int = 100) -> list[AuditEvent]:
+    def audit_events(self, limit: int = 100, actors: Collection[str] | None = None) -> list[AuditEvent]:
         with self._lock:
-            return list(self._audit[-limit:])
+            events = self._audit if actors is None else [e for e in self._audit if e.actor in actors]
+            return list(events[-limit:])
 
     def verify_audit_chain(self) -> bool:
         with self._lock:
@@ -294,10 +299,11 @@ class InMemoryStore:
                     if published:
                         e["published_at"] = datetime.now(timezone.utc)
 
-    def event_counts(self) -> dict[str, int]:
+    def event_counts(self, *, tenant_id: str) -> dict[str, int]:
         with self._lock:
-            done = sum(1 for e in self._events if e["published_at"])
-            return {"published": done, "pending": len(self._events) - done}
+            mine = [e for e in self._events if self._tenant_of(e["key"]) == tenant_id]
+            done = sum(1 for e in mine if e["published_at"])
+            return {"published": done, "pending": len(mine) - done}
 
     def set_fingerprints(self, case_id: str, owner_hash: str, items: list[tuple[str, str]]) -> None:
         with self._lock:
@@ -309,8 +315,10 @@ class InMemoryStore:
     def match_fingerprints(self, case_id: str, items: list[tuple[str, str]]) -> list[dict[str, Any]]:
         wanted = set(items)
         with self._lock:
+            lender = self._tenant_of(case_id)
             return [dict(p) for p in self._prints
-                    if p["case_id"] != case_id and (p["kind"], p["value_hash"]) in wanted]
+                    if p["case_id"] != case_id and (p["kind"], p["value_hash"]) in wanted
+                    and self._tenant_of(p["case_id"]) == lender]
 
 
 # --------------------------------------------------------------------------- audit chain helpers

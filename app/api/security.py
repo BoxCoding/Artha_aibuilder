@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from app.config import Settings, get_settings
-from app.domain.models import Case, Role
+from app.domain.models import DEFAULT_TENANT, Case, Role
 from app.domain.users import User, get_accounts
 
 log = logging.getLogger("artha.security")
@@ -26,6 +26,7 @@ class Principal:
     uid: str
     name: str
     role: Role
+    tenant_id: str = DEFAULT_TENANT
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -60,7 +61,7 @@ def current_principal(request: Request, settings: Settings = Depends(get_setting
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has expired. Sign in again.")
     if user.is_demo and not settings.demo_mode:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Demo accounts are disabled.")
-    principal = Principal(uid=user.uid, name=user.name, role=user.role)
+    principal = Principal(uid=user.uid, name=user.name, role=user.role, tenant_id=user.tenant_id)
     request.state.principal = principal
     return principal
 
@@ -75,7 +76,9 @@ def require_roles(*roles: Role):  # type: ignore[no-untyped-def]
 
 def authorise_case(case: Case, principal: Principal) -> None:
     """Customers see their own applications and loan officers the ones they sourced; credit and risk staff
-    see all. 404 rather than 403 to avoid leaking existence."""
+    see all of their own lender's. 404 rather than 403 to avoid leaking existence."""
+    if case.tenant_id != principal.tenant_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found.")
     if principal.role in (Role.BORROWER, Role.LOAN_OFFICER) and case.owner_uid != principal.uid:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found.")
 

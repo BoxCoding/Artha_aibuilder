@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.kyc import ApplicantProfile
 
+# Every lender on the platform is a tenant. Data from before multi-tenancy belongs to "default".
+DEFAULT_TENANT = "default"
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -236,6 +239,7 @@ class Explanation(Strict):
 class Case(Strict):
     case_id: str
     owner_uid: str
+    tenant_id: str = DEFAULT_TENANT  # the lender this application was made to
     business_name: str
     requested_amount: Decimal
     tenure_months: int

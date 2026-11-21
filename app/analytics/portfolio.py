@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.config import get_settings
+from app.domain.models import DEFAULT_TENANT
 
 CROSS_APP = ("FR-XAPP-001", "FR-XAPP-002", "FR-XAPP-003", "FR-VEL-001")
 
@@ -49,12 +50,14 @@ def local_portfolio(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def bigquery_portfolio() -> dict[str, Any]:
+def bigquery_portfolio(tenant_id: str) -> dict[str, Any]:
     from app.gcp import get_gcp
 
     settings = get_settings()
     project = settings.bigquery_project or settings.google_cloud_project
-    table = f"`{project}.{settings.bigquery_dataset}.events`"
+    # One lender's events only. Events from before multi-tenancy carry no lender and belong to the default one.
+    table = (f"(SELECT * FROM `{project}.{settings.bigquery_dataset}.events` "
+             f"WHERE COALESCE(JSON_VALUE(data,'$.tenant_id'), '{DEFAULT_TENANT}') = @tenant)")
     scored = f"(SELECT * FROM {table} WHERE JSON_VALUE(data, '$.topic') = 'case.scored') AS s"
     queries = {
         "totals": f"""SELECT
@@ -77,7 +80,9 @@ def bigquery_portfolio() -> dict[str, Any]:
     }
 
     def run(sql: str) -> list[dict[str, Any]]:
-        body = {"query": sql, "useLegacySql": False, "timeoutMs": 15000}
+        body = {"query": sql, "useLegacySql": False, "timeoutMs": 15000, "parameterMode": "NAMED",
+                "queryParameters": [{"name": "tenant", "parameterType": {"type": "STRING"},
+                                     "parameterValue": {"value": tenant_id}}]}
         result = get_gcp().call("POST", f"https://bigquery.googleapis.com/bigquery/v2/projects/{project}/queries", body)
         names = [f["name"] for f in result.get("schema", {}).get("fields", [])]
         return [dict(zip(names, (c.get("v") for c in row.get("f", [])))) for row in result.get("rows", [])]
@@ -97,10 +102,10 @@ def bigquery_portfolio() -> dict[str, Any]:
     }
 
 
-def portfolio(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+def portfolio(summaries: list[dict[str, Any]], tenant_id: str = DEFAULT_TENANT) -> dict[str, Any]:
     if get_settings().analytics_backend == "bigquery":
         try:
-            result = bigquery_portfolio()
+            result = bigquery_portfolio(tenant_id)
             local = local_portfolio(summaries)
             # Cross-application alerts need case IDs, which events carry but the dashboard reads locally.
             result["cross_application_alerts"] = local["cross_application_alerts"]

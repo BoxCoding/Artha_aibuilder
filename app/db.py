@@ -20,6 +20,7 @@ from sqlalchemy import (JSON, BigInteger, Boolean, Column, DateTime, Engine, Ind
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.config import Settings, get_settings
+from app.domain.models import DEFAULT_TENANT
 
 metadata = MetaData()
 
@@ -30,6 +31,7 @@ cases = Table(
     "cases", metadata,
     Column("case_id", String(40), primary_key=True),
     Column("owner_uid", String(120), nullable=False, index=True),
+    Column("tenant_id", String(40), nullable=False, index=True, server_default=DEFAULT_TENANT),
     Column("status", String(40), nullable=False, index=True),
     Column("business_name", String(120), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -80,6 +82,7 @@ users = Table(
     Column("email", String(254), nullable=False, unique=True),
     Column("name", String(120), nullable=False),
     Column("role", String(40), nullable=False),
+    Column("tenant_id", String(40), nullable=False, index=True, server_default=DEFAULT_TENANT),
     Column("password_hash", Text, nullable=True),  # null only for demo accounts
     Column("is_demo", Boolean, nullable=False, default=False),
     Column("active", Boolean, nullable=False, default=True),
@@ -91,6 +94,14 @@ users = Table(
     # Optional, self-declared, used only to choose the video guide's presenter. Never copied onto an
     # application, never sent to a model, never used in any credit decision.
     Column("gender", String(20), nullable=True),
+)
+
+tenants = Table(
+    "tenants", metadata,
+    Column("tenant_id", String(40), primary_key=True),  # the lender's slug, used in its sign-up link
+    Column("name", String(120), nullable=False),
+    Column("active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 jobs = Table(
@@ -184,9 +195,11 @@ def sync_sqlite_schema(engine: Engine) -> None:
         for table in metadata.sorted_tables:
             present = {c["name"] for c in inspector.get_columns(table.name)}
             for column in table.columns:
-                if column.name not in present and column.nullable:
+                default = column.server_default.arg if column.server_default is not None else None
+                if column.name not in present and (column.nullable or default is not None):
                     conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" '
-                                      f"{column.type.compile(engine.dialect)}"))
+                                      f"{column.type.compile(engine.dialect)}"
+                                      + (f" NOT NULL DEFAULT '{default}'" if default is not None else "")))
 
 
 def is_postgres(engine: Engine) -> bool:

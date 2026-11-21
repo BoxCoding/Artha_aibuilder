@@ -200,7 +200,8 @@ function renderAuthForm() {
       if (setup) await firstAdmin(name.value.trim(), email.value.trim(), password.value);
       else if (registering) {
         await enter("/api/register", { name: name.value.trim(), email: email.value.trim(), password: password.value,
-                                       gender: genderPick?.value || null });
+                                       gender: genderPick?.value || null,
+                                       lender: new URLSearchParams(location.search).get("lender") });
       } else await enter("/api/session", { email: email.value.trim(), password: password.value });
     } finally {
       submit.disabled = false;
@@ -299,7 +300,8 @@ function renderNav() {
                      risk_admin: "Admin" }[state.me.role];
   const ai = state.me.ai;
   const aiText = !ai ? "" : ai.mode === "offline" ? " · AI off" : ai.reachable === false ? " · AI unavailable" : ` · AI: ${ai.model || ai.mode}`;
-  nav.appendChild(el("span", "small muted", `${state.me.name} · ${roleName}${aiText}`));
+  const lender = state.me.lender && state.me.lender.id !== "default" ? ` · ${state.me.lender.name}` : "";
+  nav.appendChild(el("span", "small muted", `${state.me.name} · ${roleName}${lender}${aiText}`));
   const out = el("button", "ghost", "Sign out");
   out.addEventListener("click", async () => {
     try { await api("/api/session", { method: "DELETE" }); } catch { /* signing out locally regardless */ }

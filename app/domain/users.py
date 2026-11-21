@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import as_utc, sqlite_write_lock
 from app.db import users as users_table
-from app.domain.models import Role
+from app.domain.models import DEFAULT_TENANT, Role
 
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
 
@@ -70,6 +70,7 @@ class User:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = None
     gender: str | None = None  # self-declared; video guide presenter only
+    tenant_id: str = DEFAULT_TENANT  # the lender this account belongs to
 
 
 def normalise_email(email: str) -> str:
@@ -141,14 +142,15 @@ class SqlUserRepository:
                     is_demo=row.is_demo, active=row.active, session_version=row.session_version,
                     failed_logins=row.failed_logins, locked_until=as_utc(row.locked_until),
                     created_at=as_utc(row.created_at) or datetime.now(timezone.utc),
-                    last_login_at=as_utc(row.last_login_at), gender=row.gender)
+                    last_login_at=as_utc(row.last_login_at), gender=row.gender, tenant_id=row.tenant_id)
 
     @staticmethod
     def _values(user: User) -> dict[str, object]:
         return {"email": user.email, "name": user.name, "role": user.role.value, "password_hash": user.password_hash,
                 "is_demo": user.is_demo, "active": user.active, "session_version": user.session_version,
                 "failed_logins": user.failed_logins, "locked_until": user.locked_until,
-                "created_at": user.created_at, "last_login_at": user.last_login_at, "gender": user.gender}
+                "created_at": user.created_at, "last_login_at": user.last_login_at, "gender": user.gender,
+                "tenant_id": user.tenant_id}
 
     def _one(self, where: ColumnElement[bool]) -> User | None:
         with self.engine.connect() as conn:
@@ -189,7 +191,9 @@ class AccountService:
 
     # ------------------------------------------------------------------ provisioning
     def register(self, email: str, name: str, password: str, role: Role = Role.BORROWER,
-                 gender: str | None = None) -> User:
+                 gender: str | None = None, tenant_id: str = DEFAULT_TENANT) -> User:
+        # shortcut: an email is unique across the whole platform, so one person cannot hold accounts with two
+        # lenders; make (tenant_id, email) the unique key once customers borrow from several lenders here.
         email = normalise_email(email)
         if not valid_email(email):
             raise ValueError("Enter a valid email address.")
@@ -203,7 +207,7 @@ class AccountService:
             raise ValueError("Enter your name.")
         user = User(uid=f"usr-{uuid.uuid4().hex[:16]}", email=email, name=name, role=role,
                     password_hash=hash_password(password), created_at=datetime.now(timezone.utc),
-                    gender=clean_gender(gender))
+                    gender=clean_gender(gender), tenant_id=tenant_id)
         return self.repo.create(user)
 
     def set_gender(self, uid: str, gender: str | None) -> User:

@@ -3,7 +3,10 @@
     generate-secrets                         print a SECRET_KEY and RECEIPT_SIGNING_SEED
     init-db                                  create tables directly (SQLite / throwaway databases only;
                                              production uses `alembic upgrade head`)
-    create-user EMAIL NAME ROLE              create an account; password read from LEDGERLENS_PASSWORD or a prompt
+    create-tenant ID NAME                    add a lender; its customers sign up at /?lender=ID
+    list-tenants
+    create-user EMAIL NAME ROLE [--tenant ID] create an account (default lender unless --tenant); password read
+                                             from LEDGERLENS_PASSWORD or a prompt
     set-password EMAIL                       replace a password and sign the user out everywhere
     disable-user EMAIL / enable-user EMAIL   block or restore an account (revokes sessions)
     list-users
@@ -20,7 +23,7 @@ import os
 import secrets
 import sys
 
-from app.domain.models import Role
+from app.domain.models import DEFAULT_TENANT, Role
 
 
 def _password() -> str:
@@ -52,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("email")
     create.add_argument("name")
     create.add_argument("role", choices=[r.value for r in Role])
+    create.add_argument("--tenant", default=DEFAULT_TENANT, help="the lender's id")
+    tenant = sub.add_parser("create-tenant")
+    tenant.add_argument("tenant_id")
+    tenant.add_argument("name")
+    sub.add_parser("list-tenants")
     for name in ("set-password", "disable-user", "enable-user"):
         sub.add_parser(name).add_argument("email")
     sub.add_parser("list-users")
@@ -98,18 +106,33 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Set DATABASE_URL: account and audit commands act on the shared database.")
 
     from app.domain.store import get_store
+    from app.domain.tenants import get_tenants
     from app.domain.users import get_accounts
 
     accounts = get_accounts()
     store = get_store()
+    tenants = get_tenants()
 
-    if args.command == "create-user":
+    if args.command == "create-tenant":
         try:
-            user = accounts.register(args.email, args.name, _password(), role=Role(args.role))
+            created = tenants.create(args.tenant_id, args.name)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-        store.audit("operator", "cli", "ACCOUNT_CREATED", user.uid, {"role": user.role.value})
-        print(f"Created {user.role.value} {user.email} ({user.uid})")
+        store.audit("operator", "cli", "TENANT_CREATED", created.tenant_id, {})
+        print(f"Created lender {created.name} ({created.tenant_id}). Customer sign-up link: /?lender={created.tenant_id}")
+        print(f"Add its first administrator: python -m app.cli create-user EMAIL NAME risk_admin --tenant {created.tenant_id}")
+    elif args.command == "list-tenants":
+        for t in tenants.list():
+            print(f"{t.tenant_id:40} {t.name:40} {'' if t.active else 'disabled'}")
+    elif args.command == "create-user":
+        if tenants.get(args.tenant) is None:
+            raise SystemExit(f"No lender {args.tenant}. Add it with create-tenant first.")
+        try:
+            user = accounts.register(args.email, args.name, _password(), role=Role(args.role), tenant_id=args.tenant)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        store.audit("operator", "cli", "ACCOUNT_CREATED", user.uid, {"role": user.role.value, "tenant": user.tenant_id})
+        print(f"Created {user.role.value} {user.email} ({user.uid}) for lender {user.tenant_id}")
     elif args.command == "set-password":
         user = _user_by_email(args.email)
         try:
@@ -127,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "list-users":
         for user in accounts.repo.list():
             flags = ",".join(f for f, on in (("demo", user.is_demo), ("disabled", not user.active)) if on)
-            print(f"{user.uid:24} {user.role.value:12} {user.email:40} {flags}")
+            print(f"{user.uid:24} {user.tenant_id:20} {user.role.value:12} {user.email:40} {flags}")
     elif args.command == "verify-audit":
         head, count = store.audit_head()
         ok = store.verify_audit_chain()
