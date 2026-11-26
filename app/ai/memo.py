@@ -312,8 +312,11 @@ async def write_and_review(case: Case, gateway: LLMGateway, meter: UsageMeter, m
         memo.iterations = iteration
         issues = deterministic_critic(case, memo, payload)
         try:
+            # MEDIUM, one attempt: at HIGH the critic took ~105 s, past the call timeout, so it failed twice and
+            # the memo shipped unreviewed after ~3 minutes; MEDIUM reviews in ~30 s. A failed review is skipped.
             review = await gateway.structured(
-                prompt_id="critic", schema=CriticDraft, meter=meter, model=settings.model_reasoning, thinking="HIGH",
+                prompt_id="critic", schema=CriticDraft, meter=meter, model=settings.model_reasoning, thinking="MEDIUM",
+                attempts=1,
                 contents=[json.dumps({"memo": memo.model_dump(mode="json"), "bundle": payload}, default=str,
                                      ensure_ascii=False)])
             known = {c.claim_id for s in memo.sections for c in s.claims}
