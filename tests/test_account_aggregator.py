@@ -57,6 +57,9 @@ def test_aa_upload_runs_the_whole_pipeline_and_bad_json_is_refused() -> None:
     doc = body["documents"][0]
     assert doc["parser"] == "account_aggregator" and doc["pages"] == 0
     assert officer.get(f"/api/cases/{body['case_id']}/documents/{doc['doc_id']}/pages/1").status_code == 404
+    table = officer.get(f"/api/cases/{body['case_id']}/documents/{doc['doc_id']}/transactions").json()
+    assert len(table["rows"]) == 150 and table["header"]["bank_name"] == "Test Bank"
+    assert table["rows"][0]["date"] <= table["rows"][-1]["date"] and table["rows"][0]["evidence_id"].startswith("ev-")
 
     cid = officer.post("/api/cases", json={"applicant": applicant(), "requested_amount": 100000, "tenure_months": 12,
                                            "language": "en", "consent": True}).json()["case_id"]

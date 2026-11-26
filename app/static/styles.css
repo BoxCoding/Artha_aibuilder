@@ -804,3 +804,20 @@ table.kfs td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); font-
 .agent-detail { width: 100%; border-collapse: collapse; font-size: .85rem; }
 .agent-detail td { padding: .4rem .6rem; border-bottom: 1px solid var(--line); color: var(--ink); }
 .agent-detail td:last-child { font-family: ui-monospace, SFMono-Regular, monospace; color: var(--ink-soft); word-break: break-word; }
+
+/* JSON statement data (AA / Perfios) in the document viewer */
+.data-statement { background: var(--surface-solid); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.data-statement-head { display: flex; flex-direction: column; gap: .2rem; padding: .9rem 1rem; border-bottom: 1px solid var(--line); }
+.data-statement-scroll { max-height: 75vh; overflow: auto; }
+.data-statement-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.data-statement-table th { position: sticky; top: 0; background: var(--surface-solid); text-align: left; padding: .5rem .6rem;
+  font-weight: 600; color: var(--ink-soft); border-bottom: 1px solid var(--line-strong); }
+.data-statement-table td { padding: .45rem .6rem; border-bottom: 1px solid var(--line); color: var(--ink); vertical-align: top; }
+.data-statement-table td.narr { word-break: break-word; min-width: 12rem; }
+.data-statement-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.data-statement-table td.out { color: var(--red); }
+.data-statement-table td.in { color: var(--green); }
+.data-statement-table tr.marked td { background: var(--amber-wash); }
+.data-statement-table tr.marked td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
+.data-statement-table td:first-child { white-space: nowrap; }
+.data-statement-head.marked { background: var(--amber-wash); box-shadow: inset 3px 0 0 var(--amber); }

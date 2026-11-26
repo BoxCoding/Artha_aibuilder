@@ -1921,7 +1921,7 @@ function renderViewer() {
   const select = $("doc-select");
   select.replaceChildren();
   state.caseData.documents.forEach((doc) => {
-    const option = el("option", null, `${doc.filename} · ${doc.pages}p`);
+    const option = el("option", null, `${doc.filename} · ${doc.pages ? `${doc.pages}p` : "data"}`);
     option.value = doc.doc_id;
     select.appendChild(option);
   });
@@ -1935,6 +1935,7 @@ function drawPages() {
   stack.replaceChildren();
   const doc = state.caseData.documents.find((d) => d.doc_id === state.docId);
   if (!doc) return;
+  if (!doc.pages) { state.tableReady = drawDataTable(doc, stack); return; }
   for (let page = 1; page <= doc.pages; page += 1) {
     const holder = el("div", "page-holder");
     holder.dataset.page = String(page);
@@ -1948,7 +1949,66 @@ function drawPages() {
   }
 }
 
+// JSON data (Account Aggregator, Perfios) has no pages: show it the way the bank would print it, one row per
+// transaction, so citations land on a row just as they land on a region of a PDF page.
+async function drawDataTable(doc, stack) {
+  const source = { account_aggregator: "Account Aggregator data", perfios: "Perfios statement report" }[doc.parser] || doc.parser;
+  const sheet = el("div", "data-statement");
+  sheet.appendChild(el("p", "small muted", "Loading transactions…"));
+  stack.appendChild(sheet);
+  let data;
+  try { data = await api(`/api/cases/${state.caseId}/documents/${doc.doc_id}/transactions`); }
+  catch (error) { sheet.replaceChildren(el("p", "small error-text", error.message)); return; }
+  const h = data.header;
+  const period = h.period_from ? `${fmtDate(h.period_from)} – ${fmtDate(h.period_to)}` : "";
+  const head = el("div", "data-statement-head");
+  head.append(el("strong", null, h.bank_name || "Bank account"),
+    el("span", "small muted", [h.account_holder, h.account_last4 ? `A/c XX${h.account_last4}` : null, period]
+      .filter(Boolean).join(" · ")),
+    el("span", "small muted", `${source} · ${data.rows.length} transactions · straight from the bank, no scanning`));
+  const wrap = el("div", "data-statement-scroll");
+  const table = el("table", "data-statement-table");
+  const thead = el("tr");
+  ["Date", "Narration", "Category", "Withdrawal", "Deposit", "Balance"].forEach((t) => thead.appendChild(el("th", null, t)));
+  table.appendChild(thead);
+  const amt = (v) => (Number(v) ? Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "");
+  data.rows.forEach((r) => {
+    const tr = el("tr");
+    tr.dataset.evidence = r.evidence_id;
+    const narration = el("td", "narr", r.narration);
+    if (r.reference) narration.title = `Ref ${r.reference}`;
+    tr.append(el("td", null, fmtDate(r.date)), narration, el("td", "small muted", r.category.replace(/_/g, " ")),
+              el("td", "num out", amt(r.debit)), el("td", "num in", amt(r.credit)), el("td", "num", amt(r.balance)));
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  sheet.replaceChildren(head, wrap);
+}
+
+async function markDataRows(ids) {
+  const docId = state.caseData.evidence[ids[0]].doc_id;
+  if (docId !== state.docId) {
+    state.docId = docId;
+    $("doc-select").value = docId;
+    drawPages();
+  }
+  await state.tableReady;
+  document.querySelectorAll(".data-statement .marked").forEach((n) => n.classList.remove("marked"));
+  const rows = ids.map((id) => state.caseData.evidence[id].kind === "HEADER" ? document.querySelector(".data-statement-head")
+    : document.querySelector(`tr[data-evidence="${CSS.escape(id)}"]`)).filter(Boolean);
+  rows.forEach((n) => n.classList.add("marked"));
+  $("viewer-note").textContent = rows.some((n) => n.tagName !== "TR") ? "Account details marked" : `${rows.length} row(s) marked`;
+  rows[0]?.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 function markEvidence(ids) {
+  const ev = state.caseData.evidence;
+  const docOf = (id) => state.caseData.documents.find((d) => d.doc_id === ev[id]?.doc_id);
+  const isData = (id) => Boolean(docOf(id)) && !docOf(id).pages;
+  // A computed figure on JSON data points at the rows it was built from, so they can be marked too.
+  const expanded = ids.flatMap((id) => ev[id]?.kind === "COMPUTED" && isData(ev[id].derived_from?.[0]) ? ev[id].derived_from : [id]);
+  const dataIds = expanded.filter(isData);
+  if (dataIds.length) { markDataRows(dataIds); return; }
   document.querySelectorAll(".mark-box, .mark-label").forEach((node) => node.remove());
   const evidence = ids.map((id) => state.caseData.evidence[id]).filter((e) => e && e.bbox);
   const offPage = ids.map((id) => state.caseData.evidence[id]).filter((e) => e && !e.bbox);

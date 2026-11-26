@@ -776,6 +776,22 @@ async def page_image(case_id: str, doc_id: str, page: int,
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=600"})
 
 
+@app.get("/api/cases/{case_id}/documents/{doc_id}/transactions")
+async def document_transactions(case_id: str, doc_id: str,
+                                principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> dict[str, Any]:
+    """A document's rows as read, for the viewer: JSON data (AA, Perfios) has no pages to show, so the officer
+    sees it as a statement table, and citations point at its rows."""
+    case = _case_for(case_id, principal)
+    doc = next((d for d in case.documents if d.doc_id == doc_id), None)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
+    return {"header": doc.header.model_dump(mode="json"), "parser": doc.parser,
+            "rows": [{"evidence_id": t.evidence_id, "date": t.txn_date.isoformat(), "narration": t.narration,
+                      "reference": t.reference, "debit": str(t.debit), "credit": str(t.credit),
+                      "balance": str(t.balance), "category": t.category}
+                     for t in case.transactions if t.doc_id == doc_id]}
+
+
 @app.get("/api/cases/{case_id}/evidence/{evidence_id}/crop")
 async def evidence_crop(case_id: str, evidence_id: str,
                         principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER, Role.RISK_ADMIN))) -> Response:
