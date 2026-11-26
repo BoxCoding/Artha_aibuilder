@@ -109,7 +109,7 @@ class Document(Strict):
     size_bytes: int
     page_count: int
     doc_type: str = "bank_statement"
-    parser: Literal["template", "universal", "document_ai", "gemini", "ollama", "none"] = "none"
+    parser: Literal["template", "universal", "account_aggregator", "perfios", "document_ai", "gemini", "ollama", "none"] = "none"
     header: StatementHeader = Field(default_factory=StatementHeader)
     metadata: dict[str, str] = Field(default_factory=dict)
     incremental_updates: int = 0

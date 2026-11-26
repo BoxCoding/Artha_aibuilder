@@ -25,7 +25,8 @@ from app.ai import liveavatar
 from app.ai.guide import FIELDS as GUIDE_FIELDS, guide_reply
 from app.ai.gateway import UsageMeter, get_gateway
 from app.api.security import (COOKIE_NAME, Principal, authorise_case, clear_session, client_ip, current_principal,
-                              enforce, issue_session, limiter, origin_allowed, require_roles, validate_upload)
+                              enforce, integration_key, issue_session, limiter, origin_allowed, require_roles,
+                              tenant_for_key, validate_upload)
 from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest, CopilotRequest, CreateCaseRequest,
                            AskRequest, CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, ProfileRequest,
                            RegisterRequest, VoiceFormRequest, case_view)
@@ -408,12 +409,19 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
     """Accept a statement, decrypt it if needed, and read it immediately so the uploader sees at once
     which bank, account and period it covers, or why it cannot be used. The password is never stored."""
     settings = get_settings()
-    store = get_store()
     case = _case_for(case_id, principal)
     _check_can_attach(case, settings.max_documents_per_case)
     data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
-    prepared = await asyncio.to_thread(validate_upload, file.filename or "statement.pdf", data, settings,
-                                       (password or "").strip() or None)
+    return await _attach_statement(case_id, file.filename or "statement.pdf", data, (password or "").strip() or None,
+                                   principal.uid, principal.role.value)
+
+
+async def _attach_statement(case_id: str, filename: str, data: bytes, password: str | None, actor: str,
+                            role: str) -> dict[str, Any]:
+    """Validate, read and store one statement (PDF or JSON) on a draft case: the UI upload and the API share it."""
+    settings = get_settings()
+    store = get_store()
+    prepared = await asyncio.to_thread(validate_upload, filename, data, settings, password)
     from app.documents.intake import preview as preview_statement, unreadable_message
 
     reading = await asyncio.to_thread(preview_statement, prepared.data)
@@ -425,7 +433,7 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, problem)
     doc_id = f"doc-{uuid.uuid4().hex[:8]}"
     await asyncio.to_thread(store.put_file, case_id, doc_id, prepared.data)
-    filename = Path(file.filename or "statement.pdf").name[:80]
+    filename = Path(filename).name[:80]
     with store.mutate(case_id) as live:
         _check_can_attach(live, settings.max_documents_per_case)  # re-checked under the row lock
         live.documents.append(Document(
@@ -433,13 +441,44 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
             decrypted=prepared.decrypted, source_sha256=prepared.source_sha256,
             metadata=prepared.source_metadata if prepared.decrypted else {},
             incremental_updates=prepared.source_incremental_updates if prepared.decrypted else 0))
-    store.audit(principal.uid, principal.role.value, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}",
+    store.audit(actor, role, "UPLOAD_DOCUMENT", f"{case_id}/{doc_id}",
                 {"bytes": len(data), "decrypted": prepared.decrypted, "readable": reading["readable"]})
     note = None if reading["readable"] else "This layout will be read by the AI model when you submit."
     publish_event("document.uploaded", case_id, case_id=case_id, doc_id=doc_id, pages=prepared.page_count,
                   decrypted=prepared.decrypted, reader=reading["reader"], readable=reading["readable"],
                   transactions=reading["transactions"])
     return {"doc_id": doc_id, "filename": filename, "preview": reading, "note": note}
+
+
+@app.post("/api/integrations/cases/{case_id}/statements")
+async def push_statement(case_id: str, request: Request, filename: str = "api-statement.json") -> dict[str, Any]:
+    """Server-to-server: the lender's LOS, AA gateway or Perfios callback posts the JSON (AA FI data or a Perfios
+    report) as the request body with the lender's API key in X-API-Key. Same checks as an upload."""
+    settings = get_settings()
+    tenant = tenant_for_key(request.headers.get("x-api-key", ""), settings)
+    if tenant is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "A valid X-API-Key is required.")
+    enforce(f"integration:{tenant}", 60, 60)
+    case = get_store().get(case_id)  # CaseNotFound -> 404
+    if case.tenant_id != tenant:  # another lender's case looks exactly like a missing one
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Case not found.")
+    _check_can_attach(case, settings.max_documents_per_case)
+    cap, data = settings.max_upload_mb * 1024 * 1024, b""
+    async for chunk in request.stream():  # bounded read: never hold more than the upload limit in memory
+        data += chunk
+        if len(data) > cap:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Each file must be under {settings.max_upload_mb} MB.")
+    if not data.lstrip().startswith(b"{"):
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send the statement data as JSON.")
+    return await _attach_statement(case_id, Path(filename).name or "api-statement.json", data, None,
+                                   f"api:{tenant}", "integration")
+
+
+@app.get("/api/integrations/key")
+async def integration_settings(principal: Principal = Depends(require_roles(Role.RISK_ADMIN))) -> dict[str, str]:
+    """The lender's API key for pushing statement data, shown to its risk admin only."""
+    return {"api_key": integration_key(principal.tenant_id, get_settings()),
+            "endpoint": "/api/integrations/cases/{case_id}/statements"}
 
 
 @app.delete("/api/cases/{case_id}/documents/{doc_id}")
@@ -728,6 +767,8 @@ async def page_image(case_id: str, doc_id: str, page: int,
     if page < 1 or page > 200 or not any(d.doc_id == doc_id for d in case.documents):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.")
     data = await asyncio.to_thread(store.get_file, case_id, doc_id)
+    if not data.startswith(b"%PDF"):  # Account Aggregator data has no pages
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Page not found.")
     try:
         png = await asyncio.to_thread(render_page_png, data, page)
     except IndexError as exc:

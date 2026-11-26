@@ -1,6 +1,8 @@
 """Session handling, role checks, rate limiting and upload validation."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import threading
 import time
@@ -210,8 +212,20 @@ def validate_upload(filename: str, data: bytes, settings: Settings, password: st
     if len(data) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                             f"Each file must be under {settings.max_upload_mb} MB.")
+    from app.documents.account_aggregator import is_account_aggregator, read_json
+
+    if is_account_aggregator(data):
+        parsed, _ = read_json(data)
+        if parsed.needs_ai:  # no model can help with JSON; say so now rather than at submission
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                "This JSON has no bank transactions we can read. Send the decrypted Account "
+                                "Aggregator FI data (ReBIT deposit schema) or a Perfios statement report.")
+        from app.documents.intake import PreparedFile
+
+        return PreparedFile(data=data, page_count=0, source_sha256=hashlib.sha256(data).hexdigest())
     if not data.startswith(PDF_MAGIC):
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Upload a PDF bank statement.")
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            "Upload a PDF bank statement or Account Aggregator data (JSON).")
     if b"/JavaScript" in data or b"/Launch" in data or b"/EmbeddedFile" in data:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "This PDF contains active content and cannot be accepted. Download a fresh copy from your "
@@ -229,3 +243,19 @@ def validate_upload(filename: str, data: bytes, settings: Settings, password: st
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             f"Statements longer than {settings.max_pages_per_document} pages are not accepted here.")
     return prepared
+
+
+def integration_key(tenant_id: str, settings: Settings) -> str:
+    """A lender's API key, derived from the server secret, so there is no key table to leak or migrate.
+    shortcut: rotating SECRET_KEY rotates every lender's key and one lender's key cannot be revoked alone;
+    move to a stored, hashed key per lender when a lender needs to revoke or rotate on its own."""
+    mac = hmac.new(settings.secret_key.get_secret_value().encode(), f"integration:{tenant_id}".encode(),
+                   hashlib.sha256).hexdigest()[:40]
+    return f"llk_{tenant_id}.{mac}"
+
+
+def tenant_for_key(key: str, settings: Settings) -> str | None:
+    if not key.startswith("llk_") or "." not in key:
+        return None
+    tenant = key[4:].rsplit(".", 1)[0]
+    return tenant if hmac.compare_digest(key, integration_key(tenant, settings)) else None

@@ -335,6 +335,13 @@ async function loadTeam() {
                el("td", null, u.last_login_at ? new Date(u.last_login_at).toLocaleString("en-IN") : "never"), action);
     body.appendChild(row);
   });
+  $("integration-reveal").onclick = async () => {
+    const { api_key, endpoint } = await api("/api/integrations/key");
+    const box = $("integration-key");
+    box.textContent = `curl -X POST "${location.origin}${endpoint.replace("{case_id}", "<case_id>")}" \\\n`
+      + `  -H "X-API-Key: ${api_key}" -H "Content-Type: application/json" \\\n  --data-binary @statement.json`;
+    box.hidden = false;
+  };
   const form = $("team-form");
   if (!form.dataset.ready) {
     form.dataset.ready = "1";
@@ -759,15 +766,49 @@ function showReview(form, voiceFilled, next, note, save) {
 function renderStatements(form) {
   const box = el("fieldset", "form-section");
   box.appendChild(el("legend", null, "Bank statements"));
-  box.appendChild(el("p", "small muted", "Upload the last six months as PDFs downloaded from net banking or the "
-    + "bank's email - up to 3 files. Password-protected statements are fine: enter the PDF password when asked. "
-    + "Each statement is read the moment it arrives."));
+  box.appendChild(el("p", "small muted", "Six months of bank data, up to 3 files, as a statement PDF, as JSON, "
+    + "or sent by your systems over the API. Each one is read the moment it arrives."));
+  const SOURCES = [["pdf", "Bank statement (PDF)"], ["json", "JSON (Account Aggregator / Perfios)"]];
+  if (state.me.role !== "borrower") SOURCES.push(["api", "API integration"]);
+  const picker = el("div", "segmented");
+  picker.setAttribute("role", "radiogroup");
+  picker.setAttribute("aria-label", "How the bank data arrives");
   const drop = el("label", "dropzone");
-  const input = control("input", "f-files", { type: "file", accept: "application/pdf,.pdf", multiple: true });
-  drop.append(input, el("span", null, "Drop PDF statements here, or click to choose"));
-  box.appendChild(drop);
+  const input = control("input", "f-files", { type: "file", multiple: true });
+  const dropText = el("span");
+  drop.append(input, dropText);
+  const hint = el("p", "small muted");
+  const apiBox = el("div", "api-box");
   const list = el("div", "uploads");
-  box.appendChild(list);
+  const choose = (source) => {
+    picker.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.source === source)));
+    drop.hidden = source === "api";
+    apiBox.hidden = source !== "api";
+    input.accept = source === "pdf" ? "application/pdf,.pdf" : "application/json,.json";
+    dropText.textContent = source === "pdf" ? "Drop PDF statements here, or click to choose"
+      : "Drop the AA FI data or Perfios report (.json) here, or click to choose";
+    hint.textContent = source === "pdf" ? "Downloaded from net banking or the bank's email. Password-protected PDFs "
+      + "are fine: enter the PDF password when asked."
+      : source === "json" ? "The decrypted Account Aggregator FI data (ReBIT deposit format) fetched with the "
+      + "customer's consent, or a Perfios statement report. Read as it comes, no scanning needed." : "";
+  };
+  SOURCES.forEach(([key, label]) => {
+    const b = button(label, "ghost", () => choose(key));
+    b.type = "button";
+    b.dataset.source = key;
+    b.setAttribute("role", "radio");
+    picker.appendChild(b);
+  });
+  apiBox.append(
+    el("p", "small", "Your LOS, Account Aggregator gateway or Perfios callback posts the JSON to this application:"),
+    el("pre", "small", `POST ${location.origin}/api/integrations/cases/${state.caseId}/statements\n`
+      + "X-API-Key: <your lender API key - your admin has it under Team>\nContent-Type: application/json\n\n"
+      + "<AA FI data or Perfios report>"));
+  const check = el("button", "ghost", "Check for data received");
+  check.type = "button";
+  apiBox.appendChild(check);
+  box.append(picker, hint, drop, apiBox, list);
+  choose("pdf");
 
   if (state.config?.demo_mode) {
     const demo = el("div", "demo-hint");
@@ -795,6 +836,13 @@ function renderStatements(form) {
   ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
   drop.addEventListener("drop", (e) => { e.preventDefault(); accept(e.dataTransfer.files); });
+  check.addEventListener("click", async () => {
+    const shown = new Set([...list.querySelectorAll(".upload")].map((r) => r.dataset.docId));
+    const { documents } = await api(`/api/cases/${state.caseId}`);
+    const fresh = documents.filter((d) => !shown.has(d.doc_id));
+    fresh.forEach((d) => addUploadRow(list, { name: d.filename }, null, { doc_id: d.doc_id, label: "Received over the API" }, sync));
+    check.textContent = fresh.length ? "Check for data received" : "Nothing new yet - check again";
+  });
   submit.addEventListener("click", async () => {
     submit.disabled = true;
     try {
@@ -827,7 +875,8 @@ function addUploadRow(list, meta, file, done, sync) {
 
   const succeed = (result) => {
     row.className = "upload ok";
-    status.textContent = result.preview ? describePreview(result.preview) : "Sample statement attached";
+    row.dataset.docId = result.doc_id;
+    status.textContent = result.preview ? describePreview(result.preview) : result.label || "Sample statement attached";
     if (result.note) status.textContent += ` (${result.note})`;
     guide?.onView(currentView);
     actions.replaceChildren();
@@ -1315,7 +1364,7 @@ function renderCaseHead() {
   head.replaceChildren();
   $("case-title").textContent = data.business_name;
   const readers = [...new Set(data.documents.map((d) => ({ template: "standard reader", universal: "bank-layout reader",
-    ollama: "local AI model", gemini: "Gemini" }[d.parser] || d.parser)))].join(", ");
+    account_aggregator: "Account Aggregator", ollama: "local AI model", gemini: "Gemini" }[d.parser] || d.parser)))].join(", ");
   head.appendChild(el("div", "case-meta", `${data.transaction_count} transactions · ${data.documents.length} statement(s)`
     + ` · read by ${readers}` + (data.documents.some((d) => d.decrypted) ? " · password-protected original" : "")));
 
@@ -1382,7 +1431,7 @@ function renderCaseHead() {
 }
 
 const TABS = [["memo", "Memo"], ["integrity", "Integrity"], ["cashflow", "Cash flow"], ["policy", "Policy"],
-              ["compliance", "Compliance"], ["copilot", "Co-pilot"], ["audit", "Pipeline"]];
+              ["compliance", "Compliance"], ["copilot", "Co-pilot"], ["agents", "Agents"], ["audit", "Pipeline"]];
 const CHECK_LABEL = { pass: "pass", attention: "needs attention", pending: "pending", fail: "fail", "n/a": "n/a" };
 const CHECK_CLASS = { pass: "info", attention: "medium", pending: "low", fail: "high", "n/a": "low" };
 
@@ -1598,6 +1647,8 @@ function renderPanel() {
     renderCompliance(panel, data);
   } else if (state.tab === "copilot") {
     renderCopilot(panel);
+  } else if (state.tab === "agents") {
+    renderAgentGraph(panel, data);
   } else {
     data.progress.forEach((step) => {
       const row = el("div", "ledger-row");
@@ -1614,6 +1665,125 @@ function renderPanel() {
     });
     panel.appendChild(docs);
   }
+}
+
+// How the agents hand work to each other, drawn from this case's own run: the same graph the ADK workflow runs
+// (forensics and cash flow in parallel), each edge labelled with what was actually passed along.
+const AGENTS = {
+  intake: ["Bank data in", "PDF · JSON · API", 320, 40],
+  read_documents: ["Reader agent", "reads & reconciles", 320, 140],
+  screen_content: ["Content guard", "screens hidden instructions", 320, 240],
+  categorise: ["Categoriser", "rules first, model for the rest", 320, 340],
+  forensics: ["Forensics agent", "is it genuine?", 170, 450],
+  cashflow: ["Cash-flow analyst", "income, bounces, EMIs", 470, 450],
+  risk_engine: ["Risk engine", "score + credit policy", 320, 560],
+  structuring: ["Structuring agent", "amount / tenure options", 320, 660],
+  memo_and_critic: ["Memo writer ⇄ critic", "writes, reviews, rewrites", 320, 760],
+  publish: ["Publisher", "to the credit queue", 320, 860],
+  model: ["AI model", "via the gateway", 590, 560],
+};
+const AGENT_EDGES = [["intake", "read_documents"], ["read_documents", "screen_content"], ["screen_content", "categorise"],
+  ["categorise", "forensics"], ["categorise", "cashflow"], ["forensics", "risk_engine"], ["cashflow", "risk_engine"],
+  ["risk_engine", "structuring"], ["structuring", "memo_and_critic"], ["memo_and_critic", "publish"]];
+
+function edgeLabel(from, steps, data) {
+  const d = (steps[from] || {}).detail || {};
+  const sum = (o) => Object.entries(o).filter(([k]) => k.endsWith("findings")).reduce((n, [, v]) => n + Math.max(0, Number(v) || 0), 0);
+  return {
+    intake: `${data.documents.length} file(s) · ${[...new Set(data.documents.map((x) => x.parser))].join(", ")}`,
+    read_documents: d.transactions != null ? `${d.transactions} transactions` : "",
+    screen_content: d.local_flags != null ? `${d.local_flags} narrations held back` : "",
+    categorise: d.by_rules != null ? `${d.by_rules} by rules · ${d.by_model} by model` : "",
+    forensics: d.rule_findings != null ? `${sum(d)} integrity findings` : "",
+    cashflow: d.months != null ? `${d.months} months · ${d.signals} signals` : "",
+    risk_engine: d.band ? `band ${d.band} · ${d.outcome}` : "",
+    structuring: d.options != null ? `${d.options} viable option(s)` : "",
+    memo_and_critic: d.verdict ? `memo · critic ${d.verdict}` : "",
+  }[from] || "";
+}
+
+function renderAgentGraph(panel, data) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svgEl = (tag, attrs, text) => {
+    const n = document.createElementNS(NS, tag);
+    Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v));
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const steps = Object.fromEntries((data.progress || []).map((s) => [s.step, s]));
+  const statusOf = (key) => key === "intake" ? (data.documents.length ? "completed" : "pending")
+    : key === "model" ? "model" : (steps[key] || {}).status || "pending";
+  const usedModel = {
+    read_documents: ["gemini", "ollama"].some((p) => data.documents.some((x) => x.parser === p)),
+    categorise: Number((steps.categorise || {}).detail?.by_model) > 0,
+    forensics: Number((steps.forensics || {}).detail?.visual_findings) > 0,
+    memo_and_critic: ["gemini", "ollama"].includes((steps.memo_and_critic || {}).detail?.author),
+  };
+  panel.appendChild(el("p", "small muted", "Each box is an agent; arrows show what it hands to the next one in this "
+    + "case. Dashed lines go to the AI model, only where an agent actually used it. Click an agent for its report."));
+  const svg = svgEl("svg", { viewBox: "0 0 680 910", class: "agent-graph", role: "img",
+    "aria-label": "Agent communication graph for this application" });
+  const defs = svgEl("defs", {});
+  const marker = svgEl("marker", { id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7",
+    markerHeight: "7", orient: "auto-start-reverse" });
+  marker.appendChild(svgEl("path", { d: "M0,0 L10,5 L0,10 z", class: "agent-arrow" }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+  const W = 190, H = 58;
+  AGENT_EDGES.forEach(([a, b]) => {
+    const [, , x1, y1] = AGENTS[a], [, , x2, y2] = AGENTS[b];
+    const done = statusOf(a) === "completed";
+    const live = done && statusOf(b) === "started";
+    svg.appendChild(svgEl("path", { d: `M${x1},${y1 + H / 2} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2 - H / 2}`,
+      class: `agent-edge ${done ? "done" : ""} ${live ? "live" : ""}`, "marker-end": "url(#arrow)" }));
+    const label = edgeLabel(a, steps, data);
+    if (label && b !== "cashflow") {
+      const lx = a === "forensics" ? x1 - 10 : a === "cashflow" ? x1 + 10 : a === "categorise" ? x1 + W / 2 + 8 : x1 + 12;
+      const ly = a === "categorise" ? y1 + 4 : (y1 + y2) / 2 + 4;  // beside the box: the fork's curves fill the gap below
+      svg.appendChild(svgEl("text", { x: lx, y: ly, class: "agent-edge-label",
+        "text-anchor": a === "forensics" ? "end" : "start" }, label));
+    }
+  });
+  Object.entries(usedModel).filter(([, used]) => used).forEach(([key]) => {
+    const [, , x, y] = AGENTS[key], [, , mx, my] = AGENTS.model;
+    svg.appendChild(svgEl("path", { d: `M${x + W / 2},${y} C${mx - 40},${y} ${mx - 40},${my} ${mx - W / 2 + 40},${my}`,
+      class: "agent-edge model" }));
+  });
+  const memo = (steps.memo_and_critic || {}).detail || {};
+  if (Number(memo.iterations) > 1) {
+    const [, , x, y] = AGENTS.memo_and_critic;
+    svg.appendChild(svgEl("path", { d: `M${x - W / 2},${y - 10} C${x - W / 2 - 60},${y - 40} ${x - W / 2 - 60},${y + 40} ${x - W / 2},${y + 10}`,
+      class: "agent-edge done", "marker-end": "url(#arrow)" }));
+    svg.appendChild(svgEl("text", { x: x - W / 2 - 66, y: y + 4, class: "agent-edge-label", "text-anchor": "end" },
+      `critic sent it back ×${Number(memo.iterations) - 1}`));
+  }
+  const report = el("div", "finding agent-report");
+  report.hidden = true;
+  Object.entries(AGENTS).forEach(([key, [name, role, x, y]]) => {
+    if (key === "model" && !Object.values(usedModel).some(Boolean)) return;
+    const st = statusOf(key);
+    const g = svgEl("g", { class: `agent-node ${st}`, tabindex: "0", role: "button", "aria-label": `${name}: ${st}` });
+    g.appendChild(svgEl("rect", { x: x - W / 2, y: y - H / 2, width: W, height: H, rx: 14 }));
+    g.appendChild(svgEl("text", { x, y: y - 6, class: "agent-name", "text-anchor": "middle" }, name));
+    const ms = (steps[key] || {}).duration_ms;
+    g.appendChild(svgEl("text", { x, y: y + 13, class: "agent-role", "text-anchor": "middle" },
+      ms != null ? `${role} · ${(ms / 1000).toFixed(1)} s` : st === "started" ? "working…" : role));
+    const open = () => {
+      report.hidden = false;
+      report.replaceChildren(el("h3", null, `${name} — ${st}`), el("p", "small muted", (steps[key] || {}).label || role));
+      const t = el("table", "agent-detail");
+      Object.entries((steps[key] || {}).detail || {}).forEach(([k, v]) => {
+        const tr = el("tr");
+        tr.append(el("td", null, k.replace(/_/g, " ")), el("td", null, String(v)));
+        t.appendChild(tr);
+      });
+      if (t.childElementCount) report.appendChild(t);
+    };
+    g.addEventListener("click", open);
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    svg.appendChild(g);
+  });
+  panel.append(svg, report);
 }
 
 function renderCopilot(panel) {

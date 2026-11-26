@@ -160,6 +160,14 @@
       <div class="actions"><button class="stamp" type="submit">Create account</button></div>
       <p class="small muted" id="team-note" role="status"></p>
     </form>
+    <div class="sheet" id="integration-box">
+      <h2>API integration</h2>
+      <p class="small muted">Your LOS, Account Aggregator gateway or Perfios callback can send statement data straight
+        into an application. POST the JSON (AA FI data or a Perfios report) as the request body, with this key in the
+        <code>X-API-Key</code> header. Keep the key on your servers; never put it in a browser or app.</p>
+      <button class="ghost" type="button" id="integration-reveal">Show API key</button>
+      <pre class="small" id="integration-key" hidden></pre>
+    </div>
   </section>
 
   <section id="view-account" class="hidden">

@@ -70,7 +70,12 @@ def prepare(data: bytes, password: str | None) -> PreparedFile:
 
 
 def read_deterministic(data: bytes) -> tuple[ParsedStatement, str]:
-    """Template reader first (exact for the layout it knows), then the universal reader."""
+    """Account Aggregator data as it comes; for a PDF, the template reader first (exact for the layout it
+    knows), then the universal reader."""
+    from app.documents.account_aggregator import is_account_aggregator, read_json
+
+    if is_account_aggregator(data):
+        return read_json(data)
     parsed = read_statement(data)
     if not parsed.needs_ai:
         return parsed, "template"

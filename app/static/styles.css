@@ -773,3 +773,34 @@ table.kfs td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); font-
   .guide-launcher::before, .guide-live i, .guide-listen i, .guide-pulse, .presenter-img, .presenter-ring { animation: none !important; }
   .gauge-value { transition: none; }
 }
+
+/* Bank-data source picker: PDF / JSON / API */
+.segmented { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0 .2rem; }
+.segmented button { border: 1px solid var(--line-strong); border-radius: 999px; padding: .4rem .9rem; font-size: .85rem; }
+.segmented button[aria-checked="true"] { background: var(--brand-wash); border-color: var(--brand); color: var(--ink); }
+.api-box pre, #integration-key { white-space: pre-wrap; word-break: break-all; background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 10px; padding: .75rem; }
+
+/* Agents tab: who hands what to whom */
+.agent-graph { width: 100%; max-width: 720px; height: auto; display: block; margin: .5rem auto; }
+.agent-node rect { fill: var(--surface-solid); stroke: var(--line-strong); stroke-width: 1.2; }
+.agent-node { cursor: pointer; }
+.agent-node:focus-visible rect, .agent-node:hover rect { stroke: var(--brand); stroke-width: 2; }
+.agent-node.completed rect { stroke: var(--green); fill: var(--green-wash); }
+.agent-node.failed rect { stroke: var(--red); fill: var(--red-wash); }
+.agent-node.started rect { stroke: var(--amber); fill: var(--amber-wash); }
+.agent-node.model rect { stroke: var(--brand-2); stroke-dasharray: 5 4; }
+.agent-node.pending { opacity: .55; }
+.agent-name { fill: var(--ink); font-size: 14px; font-weight: 600; }
+.agent-role { fill: var(--ink-soft); font-size: 11px; }
+.agent-edge { fill: none; stroke: var(--line-strong); stroke-width: 1.6; }
+.agent-edge.done { stroke: var(--brand); }
+.agent-edge.model { stroke: var(--brand-2); stroke-dasharray: 4 5; stroke-width: 1.2; }
+.agent-edge.live { stroke: var(--amber); stroke-dasharray: 6 6; animation: agent-flow 0.9s linear infinite; }
+.agent-arrow { fill: var(--brand); }
+.agent-edge-label { fill: var(--ink-soft); font-size: 11px; }
+@keyframes agent-flow { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .agent-edge.live { animation: none; } }
+.agent-detail { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.agent-detail td { padding: .4rem .6rem; border-bottom: 1px solid var(--line); color: var(--ink); }
+.agent-detail td:last-child { font-family: ui-monospace, SFMono-Regular, monospace; color: var(--ink-soft); word-break: break-word; }

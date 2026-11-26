@@ -38,7 +38,8 @@ COLUMN_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("credit", ("deposit", "deposits", "credit", "credits", "cr amount", "paid in", "cr")),
     ("amount", ("amount", "txn amount", "transaction amount")),
     ("ref", ("chq", "cheque", "ref", "reference", "instrument", "utr")),
-    ("narration", ("narration", "description", "particulars", "remarks", "details", "transaction details")),
+    ("narration", ("narration", "description", "particulars", "remarks", "details", "transaction details",
+                   "transaction remarks")),
 ]
 NUMERIC_COLUMNS = {"debit", "credit", "amount", "balance"}
 
@@ -60,7 +61,8 @@ MARKER_RE = re.compile(r"^\(?(cr|dr|credit|debit|c|d)\)?\.?$", re.I)
 SKIP_LINE_RE = re.compile(r"(closing balance|total|grand total|statement summary|\bpage \d+( of \d+)?\b|"
                           r"carried forward|brought forward|c/f|b/f|end of statement|\*\*\*|computer generated|"
                           r"does not require|signature|\bdr count\b|\bcr count\b|synthetic test statement|"
-                          r"please (examine|verify)|contents of this statement|registered office)", re.I)
+                          r"please (examine|verify)|contents of this statement|registered office|dial your bank|"
+                          r"registered mobile number|never share your otp)", re.I)
 OPENING_RE = re.compile(r"(opening balance|balance b/f|brought forward|balance forward|b/f)", re.I)
 
 DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%y", "%d/%m/%y", "%d.%m.%y", "%d-%b-%Y", "%d-%b-%y",
@@ -168,12 +170,15 @@ def group_lines(words: list[dict], tolerance: float = 2.5) -> list[list[dict]]:
 
 
 def find_table(lines: list[list[dict]]) -> Table | None:
-    """Locate the header row: a line (optionally with a wrapped second line) that names a date, a
-    balance and either debit+credit or a single amount column."""
+    """Locate the header row: a line (optionally wrapped over two more lines, as ICICI prints it) that
+    names a date, a balance and either debit+credit or a single amount column."""
     for i, line in enumerate(lines[:60]):
         candidates = [line]
-        if i + 1 < len(lines) and 0 < lines[i + 1][0]["top"] - line[0]["top"] <= 14:
-            candidates.append(line + lines[i + 1])
+        for j in (i + 1, i + 2):
+            if j < len(lines) and 0 < lines[j][0]["top"] - lines[j - 1][0]["top"] <= 14:
+                candidates.append(candidates[-1] + lines[j])
+            else:
+                break
         for words in candidates:
             columns = _columns_from_header(words)
             if columns is None:
@@ -236,12 +241,17 @@ def _columns_from_header(words: list[dict]) -> list[Column] | None:
     by_line = group_lines(words)
     segments = _segments(by_line[0])
     for extra in by_line[1:]:
-        # A wrapped second header line ("Date" under "Transaction", "(INR)" under "Deposit").
+        # A wrapped header line ("Date" under "Transaction", "(INR)" under "Deposit"); words under no
+        # column so far are column names of their own ("Cheque Number" between two wrapped names).
+        orphans = []
         for w in extra:
             host = next((s for s in segments if s.x0 - 6 <= w["x0"] <= s.x1 + 6 or s.x0 - 6 <= w["x1"] <= s.x1 + 6),
                         None)
             if host is not None:
                 host.words.append(w)
+            else:
+                orphans.append(w)
+        segments += _segments(orphans) if orphans else []
     columns: list[Column] = []
     for seg in segments:
         kind = _classify(seg.phrase, exact=True) or seg.kind or _classify(seg.phrase)
@@ -260,6 +270,32 @@ def _columns_from_header(words: list[dict]) -> list[Column] | None:
         if left.kind not in NUMERIC_COLUMNS:
             left.x1 = max(left.x1, right.x0 - 4)
     return columns
+
+
+def _snap_to_rules(table: Table, page) -> Table:  # type: ignore[no-untyped-def]
+    """Bordered tables: a text column runs between the ruled lines around its header, not just under the
+    header words (ICICI centres "Transaction Remarks" over a column whose text starts far to its left)."""
+    rules = sorted({round(r["x0"], 1) for r in page.lines + page.rects
+                    if abs(r["x1"] - r["x0"]) < 2 and r["bottom"] - r["top"] > 20})
+    if len(rules) < 3:
+        return table
+    for col in table.columns:
+        if col.kind in NUMERIC_COLUMNS:
+            continue
+        left = [x for x in rules if x <= col.x0 + 2]
+        right = [x for x in rules if x >= col.x1 - 2]
+        if left and right:
+            col.x0, col.x1 = left[-1], right[0]
+    return table
+
+
+def _overlaps_next_row(line: list[dict], following: list[dict] | None, table: Table) -> bool:
+    """A narration line that overlaps the next line vertically and that next line is a dated row: the
+    bank started the narration half a line above the date, so it belongs to that row, not the one before."""
+    if following is None or max(w["bottom"] for w in line) <= following[0]["top"]:
+        return False
+    cells = _cells(following, table)
+    return _row_date(cells) is not None and _money_cell(cells.get("balance", [])) is not None
 
 
 # --------------------------------------------------------------------------- rows
@@ -336,7 +372,7 @@ def read_universal(data: bytes, password: str | None = None) -> ParsedStatement:
             lines = group_lines(words)
             page_table = find_table(lines)
             if page_table is not None:
-                table = page_table
+                table = _snap_to_rules(page_table, page)
                 start = page_table.header_bottom + 1
             elif table is not None:
                 start = -1  # header only on the first page; reuse its columns
@@ -351,11 +387,16 @@ def read_universal(data: bytes, password: str | None = None) -> ParsedStatement:
                         result.header_bbox = norm_box(min(w["x0"] for w in top_words), min(w["top"] for w in top_words),
                                                       max(w["x1"] for w in top_words),
                                                       max(w["bottom"] for w in top_words), *page_sizes[page_no])
-            for line in lines:
+            carried: list[list[dict]] = []  # narration printed just above its own date line
+            for n, line in enumerate(lines):
                 if line[0]["top"] <= start:
                     continue
                 text = " ".join(w["text"] for w in line)
                 cells = _cells(line, table)
+                if carried and _row_date(cells) is not None and _money_cell(cells.get("balance", [])):
+                    cells = _cells([w for held in carried for w in held] + line, table)
+                    line = [w for held in carried for w in held] + line
+                carried = []
                 if OPENING_RE.search(text) and result.opening_balance is None and not raw_rows:
                     money = _money_cell(cells.get("balance", []) or line)
                     if money:
@@ -365,6 +406,9 @@ def read_universal(data: bytes, password: str | None = None) -> ParsedStatement:
                     continue
                 if _row_date(cells) is not None and _money_cell(cells.get("balance", [])):
                     raw_rows.append(_Row(page_no, list(line), cells))
+                elif not any(_money_cell(cells.get(k, [])) for k in NUMERIC_COLUMNS) and _overlaps_next_row(
+                        line, lines[n + 1] if n + 1 < len(lines) else None, table):
+                    carried.append(line)
                 elif raw_rows and raw_rows[-1].page == page_no and not any(
                         _money_cell(cells.get(k, [])) for k in NUMERIC_COLUMNS):
                     # A wrapped narration (or reference) line belongs to the transaction above it.

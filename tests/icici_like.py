@@ -71,3 +71,52 @@ def build(pages: int, rows_per_page: int = 11, seed: int = 7) -> bytes:
         pdf.showPage()
     pdf.save()
     return buf.getvalue()
+
+
+def build_ruled(pages: int, rows_per_page: int = 12, seed: int = 11) -> bytes:
+    """The net-banking download as ICICI actually prints it: a ruled grid, a header wrapped over three lines
+    with the remarks title centred far right of where remarks start, the first remark line half a line
+    above the date, and a contact footer under every page. Fictional data."""
+    rnd = random.Random(seed)
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+    rules = [19, 49, 119, 189, 390, 456, 522, 574]
+    balance, day, n = Decimal("25000.00"), date(2025, 10, 1), 0
+    for page in range(1, pages + 1):
+        y = height - 84
+        pdf.setFont("Helvetica-Bold", 7)
+        for text, x, row in [("Transaction", 60, 0), ("Withdrawal", 399, 0), ("Deposit", 474, 0), ("Balance", 532, 0),
+                             ("S No.", 24, 1), ("Cheque Number", 122, 1), ("Transaction Remarks", 247, 1),
+                             ("Date", 74, 2), ("Amount (INR)", 396, 2), ("Amount (INR)", 462, 2), ("(INR)", 538, 2)]:
+            pdf.drawString(x, y - row * 5, text)
+        top = y + 8
+        y -= 20
+        pdf.line(rules[0], y + 7, rules[-1], y + 7)
+        pdf.setFont("Helvetica", 7)
+        for _ in range(rows_per_page):
+            n += 1
+            day += timedelta(days=rnd.random() < 0.4)
+            debit = Decimal(rnd.randint(50, 9000)) + Decimal(rnd.randint(0, 99)) / 100 if rnd.random() < 0.6 else None
+            credit = None if debit else Decimal(rnd.randint(500, 25000)) + Decimal(rnd.randint(0, 99)) / 100
+            balance += (credit or 0) - (debit or 0)
+            lines = _wrap(rnd.choice(REMARKS))
+            for i, line in enumerate(lines):
+                pdf.drawString(192, y - i * 10, line)
+            mid = y - 5  # half a line below the first remark line
+            pdf.drawString(28, mid, str(n))
+            pdf.drawString(61, mid, day.strftime("%d.%m.%Y"))
+            if debit:
+                pdf.drawRightString(453, mid, f"{debit:.2f}")
+            if credit:
+                pdf.drawRightString(518, mid, f"{credit:.2f}")
+            pdf.drawRightString(571, mid, f"{balance:.2f}")
+            y -= 10 * len(lines) + 10
+            pdf.line(rules[0], y + 7, rules[-1], y + 7)
+        for x in rules:
+            pdf.line(x, top, x, y + 7)
+        pdf.drawString(30, 40, "www.testbank.example Dial your Bank 0000-0000")
+        pdf.drawString(30, 30, "Never share your OTP, CVV or passwords with anyone.")
+        pdf.showPage()
+    pdf.save()
+    return buf.getvalue()

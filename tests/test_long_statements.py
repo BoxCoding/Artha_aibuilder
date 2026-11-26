@@ -7,7 +7,7 @@ from app.ai import document_ai
 from app.ai.gateway import UsageMeter
 from app.ai.schemas import ExtractedTxn, StatementExtraction
 from app.documents.universal_reader import read_universal, reconciles
-from tests.icici_like import build
+from tests.icici_like import build, build_ruled
 
 
 class ChunkReadingGateway:
@@ -54,3 +54,15 @@ def test_uploads_up_to_forty_pages_are_accepted() -> None:
     assert validate_upload("statement.pdf", build(40), settings, None).page_count == 40
     with pytest.raises(HTTPException):
         validate_upload("statement.pdf", build(41), settings, None)
+
+
+def test_ruled_icici_netbanking_layout_is_read_without_a_model() -> None:
+    """Three-line header, remarks starting above the date, ruled columns, contact footer: the universal
+    reader takes every row with its own full remarks, so the statement never waits on a model."""
+    from app.documents.intake import read_deterministic
+    from tests.icici_like import REMARKS
+
+    parsed, reader = read_deterministic(build_ruled(25))
+    assert reader == "universal" and not parsed.needs_ai
+    assert len(parsed.rows) == 25 * 12 and reconciles(parsed.rows, parsed.opening_balance)
+    assert all(r.narration.replace(" ", "") in {x.replace(" ", "") for x in REMARKS} for r in parsed.rows)
