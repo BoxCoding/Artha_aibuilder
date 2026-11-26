@@ -18,7 +18,7 @@ from contextvars import ContextVar
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
-SAFE_EXTRA = ("step", "case_id", "prompt", "model", "attempt", "error_type", "tokens", "route",
+SAFE_EXTRA = ("step", "case_id", "prompt", "model", "attempt", "error_type", "error", "tokens", "route",
               "status", "duration_ms", "method", "detail", "val_ece", "method_name")
 
 

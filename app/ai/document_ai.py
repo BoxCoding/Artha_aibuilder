@@ -2,9 +2,13 @@
 and visual inspection of suspicious cells. All outputs are validated and converted to domain objects."""
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 from datetime import date
 from decimal import Decimal, InvalidOperation
+
+from pypdf import PdfReader, PdfWriter
 
 from app.ai.gateway import Blob, LLMGateway, UsageMeter
 from app.ai.schemas import CategoryBatch, StatementExtraction, VisualReport
@@ -31,27 +35,60 @@ def _date(value: str | None) -> date | None:
         return None
 
 
+CHUNK_PAGES = 4  # one model call per 4 pages: ~45 s each, well inside the call timeout and output limit
+PARALLEL_CHUNKS = 5
+
+
+def _page_chunks(data: bytes, pages: int) -> list[tuple[int, bytes]]:
+    """(first page number - 1, PDF of the next CHUNK_PAGES pages) for every chunk of the statement."""
+    if pages <= CHUNK_PAGES:
+        return [(0, data)]
+    reader = PdfReader(io.BytesIO(data))
+    chunks = []
+    for start in range(0, len(reader.pages), CHUNK_PAGES):
+        writer = PdfWriter()
+        for page in reader.pages[start:start + CHUNK_PAGES]:
+            writer.add_page(page)
+        out = io.BytesIO()
+        writer.write(out)
+        chunks.append((start, out.getvalue()))
+    return chunks
+
+
 async def extract_with_gemini(data: bytes, gateway: LLMGateway, meter: UsageMeter) -> ParsedStatement:
-    """Model extraction for layouts the deterministic readers cannot place (any configured provider)."""
+    """Model extraction for layouts the deterministic readers cannot place (any configured provider).
+    Long statements go in page chunks, read in parallel and joined in page order, so a 40-page file
+    takes about as long as an 8-page one."""
     meta, incremental, has_js, encrypted, pages = inspect_structure(data)
-    result = await gateway.structured(
-        prompt_id="doc_intel", schema=StatementExtraction, meter=meter,
-        contents=[Blob(data, "application/pdf"), "Extract this bank statement."])
+    chunks = _page_chunks(data, pages)
+    limit = asyncio.Semaphore(PARALLEL_CHUNKS)
+
+    async def read(chunk: bytes) -> StatementExtraction:
+        async with limit:
+            return await gateway.structured(
+                prompt_id="doc_intel", schema=StatementExtraction, meter=meter,
+                contents=[Blob(chunk, "application/pdf"), "Extract this bank statement."])
+
+    results = await asyncio.gather(*(read(chunk) for _, chunk in chunks))
+    first = results[0]
     parsed = ParsedStatement(page_count=pages, needs_ai=False, metadata=meta, incremental_updates=incremental,
-                             has_javascript=has_js, encrypted=encrypted, bank_name=result.bank_name,
-                             account_holder=result.account_holder,
-                             account_last4=(result.account_last4 or "")[-4:] or None,
-                             period_from=_date(result.period_from), period_to=_date(result.period_to),
-                             opening_balance=_dec(result.opening_balance) if result.opening_balance else None)
-    for i, t in enumerate(result.transactions):
-        d = _date(t.date)
-        if d is None or not t.balance:
-            continue
-        box = [max(0, min(1000, int(v))) for v in t.box_2d[:4]] if len(t.box_2d) >= 4 else None
-        parsed.rows.append(ParsedRow(page=max(1, t.page), row_index=i, txn_date=d, narration=(t.narration or "")[:120],
-                                     reference=(t.reference or "")[:30], debit=_dec(t.debit), credit=_dec(t.credit),
-                                     balance=_dec(t.balance), row_bbox=box or [0, 0, 0, 0], amount_bbox=None,
-                                     amount_font=None, amount_size=None, balance_font=None, balance_size=None))
+                             has_javascript=has_js, encrypted=encrypted, bank_name=first.bank_name,
+                             account_holder=first.account_holder,
+                             account_last4=(first.account_last4 or "")[-4:] or None,
+                             period_from=_date(first.period_from),
+                             period_to=_date(results[-1].period_to or first.period_to),
+                             opening_balance=_dec(first.opening_balance) if first.opening_balance else None)
+    for (offset, _), result in zip(chunks, results):
+        for t in result.transactions:
+            d = _date(t.date)
+            if d is None or not t.balance:
+                continue
+            box = [max(0, min(1000, int(v))) for v in t.box_2d[:4]] if len(t.box_2d) >= 4 else None
+            parsed.rows.append(ParsedRow(page=offset + max(1, t.page), row_index=len(parsed.rows), txn_date=d,
+                                         narration=(t.narration or "")[:120], reference=(t.reference or "")[:30],
+                                         debit=_dec(t.debit), credit=_dec(t.credit), balance=_dec(t.balance),
+                                         row_bbox=box or [0, 0, 0, 0], amount_bbox=None, amount_font=None,
+                                         amount_size=None, balance_font=None, balance_size=None))
     if not parsed.rows:
         parsed.needs_ai, parsed.reason = True, "model_found_no_transactions"
     return parsed

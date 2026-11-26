@@ -199,7 +199,7 @@ class LLMGateway:
             except Exception as exc:  # noqa: BLE001 - SDKs and transports raise many types; all mean "try again"
                 last_error = exc
                 log.warning("llm_call_failed", extra={"prompt": prompt.id, "attempt": attempt,
-                                                      "error_type": type(exc).__name__})
+                                                      "error_type": type(exc).__name__, "error": str(exc)[:300]})
             if attempt < attempts:
                 await asyncio.sleep(min(cap, backoff * 2 ** attempt + random.random()))
         raise LLMUnavailable(f"{prompt.id} failed after {attempts} attempts") from last_error
