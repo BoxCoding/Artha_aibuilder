@@ -31,6 +31,7 @@ from app.api.views import (CallbackRequest, ChangePasswordRequest, CoachRequest,
                            AskRequest, CreateUserRequest, DecisionRequest, GuideRequest, LoginRequest, ProfileRequest,
                            RegisterRequest, VoiceFormRequest, case_view)
 from app.config import get_settings
+from app.domain.formatting import inr
 from app.domain.receipt import ReceiptSigner, build_payload, verify as verify_receipt
 from app.observability import configure_logging, new_request_id, request_id_var
 from app.documents.render import render_crop, render_page_png
@@ -388,7 +389,9 @@ async def create_case(payload: CreateCaseRequest,
     assisted = principal.role == Role.LOAN_OFFICER
     applicant = payload.applicant
     case = Case(case_id=f"case-{uuid.uuid4().hex[:10]}", owner_uid=principal.uid, tenant_id=principal.tenant_id,
-                business_name=(payload.business_name or applicant.business_name).strip(),
+                business_name=(payload.business_name or applicant.business_name or "").strip() if payload.product ==
+                "working_capital" else f"{applicant.full_name} · {payload.vehicle.make} {payload.vehicle.model}",  # type: ignore[union-attr]
+                product=payload.product, vehicle=payload.vehicle,
                 requested_amount=Decimal(payload.requested_amount), tenure_months=payload.tenure_months,
                 language=payload.language, applicant=applicant, channel="assisted" if assisted else "self",
                 sourced_by=principal.uid if assisted else None,
@@ -413,18 +416,18 @@ async def upload_document(case_id: str, file: UploadFile = File(...), password: 
     _check_can_attach(case, settings.max_documents_per_case)
     data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
     return await _attach_statement(case_id, file.filename or "statement.pdf", data, (password or "").strip() or None,
-                                   principal.uid, principal.role.value)
+                                   principal.uid, principal.role.value, case.product)
 
 
 async def _attach_statement(case_id: str, filename: str, data: bytes, password: str | None, actor: str,
-                            role: str) -> dict[str, Any]:
+                            role: str, product: str = "working_capital") -> dict[str, Any]:
     """Validate, read and store one statement (PDF or JSON) on a draft case: the UI upload and the API share it."""
     settings = get_settings()
     store = get_store()
     prepared = await asyncio.to_thread(validate_upload, filename, data, settings, password)
     from app.documents.intake import preview as preview_statement, unreadable_message
 
-    reading = await asyncio.to_thread(preview_statement, prepared.data)
+    reading = await asyncio.to_thread(preview_statement, prepared.data, product == "used_car")
     gateway = get_gateway()
     problem = None if reading["readable"] else unreadable_message(
         reading["reason"], model_available=gateway.enabled,  # type: ignore[arg-type]
@@ -471,7 +474,7 @@ async def push_statement(case_id: str, request: Request, filename: str = "api-st
     if not data.lstrip().startswith(b"{"):
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send the statement data as JSON.")
     return await _attach_statement(case_id, Path(filename).name or "api-statement.json", data, None,
-                                   f"api:{tenant}", "integration")
+                                   f"api:{tenant}", "integration", case.product)
 
 
 @app.get("/api/integrations/key")
@@ -479,6 +482,87 @@ async def integration_settings(principal: Principal = Depends(require_roles(Role
     """The lender's API key for pushing statement data, shown to its risk admin only."""
     return {"api_key": integration_key(principal.tenant_id, get_settings()),
             "endpoint": "/api/integrations/cases/{case_id}/statements"}
+
+
+class FollowUpRequest(BaseModel):
+    employer_name: str | None = Field(default=None, min_length=2, max_length=120)
+    business_name: str | None = Field(default=None, min_length=2, max_length=120)
+    gstin: str | None = Field(default=None, max_length=15)
+
+
+@app.post("/api/cases/{case_id}/follow-up")
+async def income_follow_up(case_id: str, payload: FollowUpRequest,
+                           principal: Principal = Depends(limiter(30))) -> dict[str, Any]:
+    """The few details asked after the bank data shows how the customer earns: the employer for a salaried
+    customer, the business (and GSTIN if any) for a self-employed one. Recorded as declared, not trusted."""
+    from app.domain.kyc import valid_gstin
+
+    gstin = (payload.gstin or "").strip().upper().replace(" ", "") or None
+    if gstin and not valid_gstin(gstin):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This GSTIN is not valid (check the state code and last character).")
+    store = get_store()
+    with store.mutate(case_id) as live:
+        authorise_case(live, principal)
+        if live.status != CaseStatus.DRAFT:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This application has already been submitted.")
+        declared = {k: v for k, v in {"employer_name": payload.employer_name, "business_name": payload.business_name,
+                                      "gstin": gstin}.items() if v}
+        live.income_profile = live.income_profile | {"declared": declared}
+    store.audit(principal.uid, principal.role.value, "INCOME_FOLLOW_UP", case_id, {"fields": sorted(declared)})
+    return {"declared": declared}
+
+
+@app.post("/api/cases/{case_id}/vehicle/valuation")
+async def record_valuation(case_id: str, valuation: int = Body(embed=True, gt=0, le=10_000_000),
+                           principal: Principal = Depends(require_roles(Role.LOAN_OFFICER, Role.UNDERWRITER))) -> dict[str, Any]:
+    """The inspection valuation of the car. The loan is capped on the lower of price and valuation, so the
+    recommendation is re-decided at once; approval is blocked until a valuation exists."""
+    from app.risk.engine import reapply_policy, vehicle_loan_cap
+
+    store = get_store()
+    with store.mutate(case_id) as live:
+        authorise_case(live, principal)
+        if live.vehicle is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This application is not for a car.")
+        if live.decision is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "A decision has already been recorded.")
+        live.vehicle = live.vehicle.model_copy(update={"valuation": Decimal(valuation), "valued_by": principal.uid,
+                                                       "valued_at": datetime.now(timezone.utc)})
+        reapply_policy(live)
+        cap = vehicle_loan_cap(live)
+        recommended = live.policy.recommended_amount if live.policy else None
+    store.audit(principal.uid, principal.role.value, "VEHICLE_VALUATION", case_id, {"valuation": valuation})
+    return {"valuation": valuation, "loan_cap": str(cap), "recommended_amount": str(recommended) if recommended is not None else None}
+
+
+@app.post("/api/cases/{case_id}/income-type")
+async def confirm_income_type(case_id: str, income_type: str = Body(embed=True),
+                              reason: str = Body(embed=True, min_length=5, max_length=400),
+                              principal: Principal = Depends(require_roles(Role.UNDERWRITER))) -> dict[str, Any]:
+    """A credit officer confirms or corrects salaried / self-employed, with a reason. The instalment is then
+    sized on the right income and the case re-decided; the original reading stays on record."""
+    from app.cashflow.income_type import assessed_monthly_income
+    from app.risk.engine import reapply_policy
+
+    if income_type not in ("salaried", "self_employed"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choose salaried or self_employed.")
+    store = get_store()
+    with store.mutate(case_id) as live:
+        authorise_case(live, principal)
+        if live.product != "used_car" or not live.income_profile:
+            raise HTTPException(status.HTTP_409_CONFLICT, "There is no income reading on this application yet.")
+        if live.decision is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "A decision has already been recorded.")
+        live.income_profile = live.income_profile | {"override": {
+            "type": income_type, "reason": reason.strip(), "by": principal.uid,
+            "at": datetime.now(timezone.utc).isoformat()}}
+        live.signals = [s for s in live.signals if s.code != "RK-INCOME-TYPE-UNCLEAR"]
+        live.features = live.features | {"assessed_monthly_income": assessed_monthly_income(live)}
+        reapply_policy(live)
+        outcome = live.policy.outcome.value if live.policy else None
+    store.audit(principal.uid, principal.role.value, "INCOME_TYPE_CONFIRMED", case_id,
+                {"type": income_type, "detected": live.income_profile.get("type")})
+    return {"income_type": income_type, "outcome": outcome}
 
 
 @app.delete("/api/cases/{case_id}/documents/{doc_id}")
@@ -516,7 +600,12 @@ async def attach_sample(case_id: str, persona: str = Body(embed=True),
         live.documents.append(Document(doc_id=doc_id, filename=f"{persona}-statement.pdf", sha256="",
                                        size_bytes=len(data), page_count=0))
     store.audit(principal.uid, principal.role.value, "ATTACH_SAMPLE", f"{case_id}/{doc_id}", {"persona": persona})
-    return {"doc_id": doc_id, "filename": f"{persona}-statement.pdf", "size_bytes": len(data)}
+    result: dict[str, Any] = {"doc_id": doc_id, "filename": f"{persona}-statement.pdf", "size_bytes": len(data)}
+    if case.product == "used_car":  # the same salaried / self-employed reading a real upload gets
+        from app.documents.intake import preview as preview_statement
+
+        result["preview"] = await asyncio.to_thread(preview_statement, data, True)
+    return result
 
 
 @app.post("/api/cases/{case_id}/submit")
@@ -859,6 +948,12 @@ async def decide(case_id: str, payload: DecisionRequest,
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Set an approved amount above zero.")
             if amount > live.requested_amount:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "The approved amount cannot exceed the amount requested.")
+            from app.risk.engine import vehicle_loan_cap
+
+            cap = vehicle_loan_cap(live)
+            if cap is not None and amount > cap:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, f"The car secures at most {inr(cap)} under the LTV "
+                                                                 "limit; that cannot be overridden.")
         else:
             amount = None
         # Lending more than the policy's affordability sizing is an override too, even with the same outcome.
@@ -898,7 +993,7 @@ async def decide(case_id: str, payload: DecisionRequest,
                 rate = effective_rate(live)
                 if rate:
                     live.kfs = build_kfs(live.case_id, amount, Decimal(str(rate)), policy.tenure_months,
-                                         live.business_name)
+                                         live.business_name, live.vehicle)
         second_approver = live.decision.second_approver if recorded and live.decision else None
 
     if not recorded:
@@ -917,7 +1012,7 @@ async def decide(case_id: str, payload: DecisionRequest,
 
 def _four_eyes_threshold(case: Case) -> str:
     from app.risk.engine import load_policy
-    return load_policy(case.jurisdiction)["four_eyes_above"]
+    return load_policy(case.policy_set)["four_eyes_above"]
 
 
 async def _ensure_explanations(case_id: str) -> None:

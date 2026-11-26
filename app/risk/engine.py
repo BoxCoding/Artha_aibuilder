@@ -70,16 +70,26 @@ def annuity_principal(emi: Decimal, annual_rate: Decimal, months: int) -> Decima
     return emi * factor
 
 
+def ltv_share(policy: dict[str, Any], age_years: float) -> Decimal:
+    return Decimal(next(t["share"] for t in policy["sizing"]["ltv"] if age_years <= t["max_age_years"]))
+
+
 def size_loan(features: dict[str, float], requested: Decimal, tenure: int, band: str,
-              policy: dict[str, Any]) -> SizingResult:
+              policy: dict[str, Any], facts: dict[str, Any] | None = None) -> SizingResult:
     s = policy["sizing"]
+    facts = facts or {}
     rate = Decimal(s["indicative_annual_rate"][band])
-    surplus = Decimal(str(features["monthly_surplus"]))
     existing = Decimal(str(features["existing_emi_monthly"]))
-    capacity = max(Decimal("0"), Decimal(s["surplus_share"]) * surplus - existing)
-    candidates = [requested, Decimal(s["max_amount"]),
-                  Decimal(s["abb_multiple"]) * Decimal(str(features["avg_daily_balance"])),
-                  annuity_principal(capacity, rate, tenure)]
+    if "income_share" in s:  # share of the assessed income: net salary, or business surplus if self-employed
+        income = Decimal(str(features.get("assessed_monthly_income", features["monthly_surplus"])))
+        capacity = max(Decimal("0"), Decimal(s["income_share"]) * income - existing)
+    else:
+        capacity = max(Decimal("0"), Decimal(s["surplus_share"]) * Decimal(str(features["monthly_surplus"])) - existing)
+    candidates = [requested, Decimal(s["max_amount"]), annuity_principal(capacity, rate, tenure)]
+    if "abb_multiple" in s:
+        candidates.append(Decimal(s["abb_multiple"]) * Decimal(str(features["avg_daily_balance"])))
+    if facts.get("vehicle_value") is not None:
+        candidates.append(ltv_share(policy, facts["vehicle_age_years"]) * Decimal(str(facts["vehicle_value"])))
     step = Decimal(s["round_down_to"])
     amount = (min(candidates) / step).to_integral_value(rounding=ROUND_DOWN) * step
     return SizingResult(amount=max(Decimal("0"), amount), emi_capacity=capacity.quantize(Decimal("1")), rate=rate)
@@ -95,14 +105,54 @@ def _signal_match(signals: list[Signal], category: str, min_severity: str) -> li
             and SEVERITY_ORDER[s.severity] >= SEVERITY_ORDER[min_severity]]
 
 
+def policy_facts(case: Any) -> dict[str, Any]:
+    """What the policy needs beyond the bank data: for a car loan, the car's value and age."""
+    v = case.vehicle
+    if v is None:
+        return {}
+    value = min(v.purchase_price, v.valuation) if v.valuation is not None else v.purchase_price
+    return {"vehicle_value": value, "vehicle_age_years": v.age_years(), "valued": v.valuation is not None}
+
+
+def vehicle_loan_cap(case: Any) -> Decimal | None:
+    """The most this car can secure under the LTV clause, or None if the case is not a car loan."""
+    facts = policy_facts(case)
+    if not facts:
+        return None
+    policy = load_policy(case.policy_set)
+    step = Decimal(policy["sizing"]["round_down_to"])
+    cap = ltv_share(policy, facts["vehicle_age_years"]) * Decimal(str(facts["vehicle_value"]))
+    return (cap / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def reapply_policy(case: Any) -> None:
+    """Re-decide after a fact the officer supplied (valuation, income type). Deterministic and instant: the
+    score and the bank-data features do not change, only what the policy makes of them."""
+    if case.score is not None:
+        case.policy = apply_policy(case.features, case.signals, case.score, case.requested_amount, case.tenure_months,
+                                   case.policy_set, policy_facts(case))
+
+
 def apply_policy(features: dict[str, float], signals: list[Signal], result: ScoreResult, requested: Decimal,
-                 tenure: int, jurisdiction: str = "IN") -> PolicyResult:
+                 tenure: int, jurisdiction: str = "IN", facts: dict[str, Any] | None = None) -> PolicyResult:
     policy = load_policy(jurisdiction)
-    tenure = tenure if tenure in policy["sizing"]["allowed_tenures"] else max(policy["sizing"]["allowed_tenures"])
+    facts = facts or {}
+    allowed = list(policy["sizing"]["allowed_tenures"])
     outcome = Outcome(policy["bands"][result.band])
     triggered = ["POL-BANDS"]
     reason_codes = [r.code for r in result.reasons[:3]]
-    conditions = list(policy.get("band_conditions", {}).get(result.band, []))
+    conditions = list(policy.get("band_conditions", {}).get(result.band, [])) + list(policy.get("standard_conditions", []))
+    too_old = False
+    if "vehicle_age_years" in facts:
+        # The car must be within its age limit when the loan ends: drop tenures that would outlive it.
+        limit = policy["sizing"]["max_vehicle_age_at_maturity_years"]
+        fitting = [t for t in allowed if facts["vehicle_age_years"] + t / 12 <= limit]
+        too_old = not fitting
+        if fitting != allowed:
+            triggered.append("POL-VEHICLE-AGE")
+        allowed = fitting or allowed[:1]
+        triggered += ["POL-LTV", "POL-VALUATION", "POL-HYPOTHECATION"]
+    tenure = tenure if tenure in allowed else max(allowed)
 
     def escalate(new: Outcome, rule: dict[str, Any]) -> None:
         nonlocal outcome
@@ -127,7 +177,9 @@ def apply_policy(features: dict[str, float], signals: list[Signal], result: Scor
             elif _signal_match(signals, rule["signal_category"], rule["min_severity"]):
                 escalate(Outcome(rule["outcome"]), rule)
 
-    sizing = size_loan(features, requested, tenure, result.band, policy)
+    if too_old:
+        escalate(Outcome.DECLINE, {"clause": "POL-VEHICLE-AGE", "reason_code": "RC-VEHICLE-TOO-OLD"})
+    sizing = size_loan(features, requested, tenure, result.band, policy, facts)
     triggered.append("POL-SIZING")
     if outcome in (Outcome.APPROVE, Outcome.APPROVE_WITH_CONDITIONS) and sizing.amount < Decimal(policy["sizing"]["min_amount"]):
         outcome = Outcome.DECLINE

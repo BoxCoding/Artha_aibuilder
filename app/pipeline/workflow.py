@@ -36,7 +36,7 @@ from app.domain.formatting import emi
 from app.domain.models import Case, CaseStatus, PipelineEvent, Signal
 from app.domain.store import CaseNotFound, CaseStore, get_store
 from app.forensics.rules import run_rules
-from app.risk.engine import apply_policy, challenge_score, improvement_plan, score
+from app.risk.engine import apply_policy, challenge_score, improvement_plan, policy_facts, score
 from app.security.injection import detect
 from app.security.model_armor import ModelArmorGuard
 
@@ -215,8 +215,16 @@ async def categorise(rc: RunContext) -> dict[str, str | int | float]:
                                                   timeout=settings.llm_categorise_timeout_seconds)
             except (LLMUnavailable, TimeoutError):
                 skipped = "model_timeout_or_unavailable"
+    detail: dict[str, str | int | float] = {}
+    if rc.case.product == "used_car":
+        # Salaried or self-employed, read from the data. It recategorises salary credits, so it runs here,
+        # before forensics and cash flow read the categories in parallel.
+        from app.cashflow.income_type import detect_income_type
+
+        rc.case.income_profile = detect_income_type(rc.case)
+        detail = {"income_type": rc.case.income_type or "unknown", "income_confidence": rc.case.income_profile["confidence"]}
     return {"by_rules": len(rc.case.transactions) - len(unmatched), "by_model": by_model,
-            "unmatched": len(unmatched), "model_skipped": skipped or "no"}
+            "unmatched": len(unmatched), "model_skipped": skipped or "no"} | detail
 
 
 @step("forensics")
@@ -248,9 +256,19 @@ async def forensics(rc: RunContext) -> dict[str, str | int | float]:
 @step("cashflow")
 async def cashflow(rc: RunContext) -> dict[str, str | int | float]:
     features, monthly = await asyncio.to_thread(compute_features, rc.case)
+    if rc.case.product == "used_car":
+        from app.cashflow.income_type import assessed_monthly_income
+
+        rc.case.features = features
+        features["salary_monthly"] = rc.case.income_profile["salary_monthly"]
+        features["assessed_monthly_income"] = assessed_monthly_income(rc.case)
     rc.case.features, rc.case.monthly = features, monthly
     add_computed_evidence(rc.case)
     rc.cashflow_signals = cashflow_signals(rc.case)
+    if rc.case.product == "used_car":
+        from app.cashflow.income_type import income_evidence_and_signals
+
+        rc.cashflow_signals += income_evidence_and_signals(rc.case)
     return {"months": int(features["statement_span_months"]), "signals": len(rc.cashflow_signals)}
 
 
@@ -264,7 +282,7 @@ async def risk_engine(rc: RunContext) -> dict[str, str | int | float]:
     if disagreement and "ev-computed-inflow" in rc.case.evidence:
         rc.case.signals = rc.case.signals + [disagreement]
     rc.case.policy = apply_policy(rc.case.features, rc.case.signals, result, rc.case.requested_amount,
-                                  rc.case.tenure_months, rc.case.jurisdiction)
+                                  rc.case.tenure_months, rc.case.policy_set, policy_facts(rc.case))
     rc.case.improvement_plan = improvement_plan(rc.case.features, result)
     policy = rc.case.policy
     # The recommendation is final here; everything after is explanation. Publishing it in the step

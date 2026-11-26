@@ -373,7 +373,7 @@ def route(state: dict[str, Any], message: str, lang: str, case: Case | None) -> 
     if MY_NAME.search(message) and not re.search(r"\byour name\b|आपका नाम|तुम्हारा नाम|nama (kamu|anda)", message, re.I):
         applicant = case.applicant if case is not None else None
         if applicant is not None:
-            return HELP_TEXT["my_name"][lang].format(name=applicant.full_name, business=applicant.business_name), \
+            return HELP_TEXT["my_name"][lang].format(name=applicant.full_name, business=applicant.business_name or "-"), \
                 "profile:name", False
         return HELP_TEXT["my_name_unknown"][lang], "profile:name", False
     if intent == "identity":

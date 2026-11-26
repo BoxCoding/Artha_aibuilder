@@ -846,7 +846,7 @@ class StatementQA:
             details = [a.constitution.value.replace("_", " "), a.industry]
             if a.business_start_year:
                 details.append(t["since"].format(x=a.business_start_year))
-            parts.append(t["profile"].format(business=a.business_name, details=", ".join(details)))
+            parts.append(t["profile"].format(business=a.business_name or a.full_name, details=", ".join(details)))
         else:
             parts.append(t["profile_none"])
         salary = [r for r in self.txns if r.credit > 0 and SALARY_CREDIT.search(r.narration)]

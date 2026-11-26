@@ -85,8 +85,9 @@ def read_deterministic(data: bytes) -> tuple[ParsedStatement, str]:
     return parsed, "template"
 
 
-def preview(data: bytes) -> dict[str, object]:
-    """What the uploader sees immediately: which bank, whose account, which period, how many rows."""
+def preview(data: bytes, income_hint: bool = False) -> dict[str, object]:
+    """What the uploader sees immediately: which bank, whose account, which period, how many rows, and, for a
+    car loan, whether the account looks salaried or self-employed (so only the right follow-up is asked)."""
     parsed, reader = read_deterministic(data)
     credits = sum(r.credit for r in parsed.rows)
     debits = sum(r.debit for r in parsed.rows)
@@ -103,7 +104,16 @@ def preview(data: bytes) -> dict[str, object]:
         "total_credits": f"{credits:.2f}" if not parsed.needs_ai else None,
         "total_debits": f"{debits:.2f}" if not parsed.needs_ai else None,
         "pages": parsed.page_count,
-    }
+    } | ({"income_hint": _income_hint(parsed)} if income_hint and not parsed.needs_ai and parsed.rows else {})
+
+
+def _income_hint(parsed: ParsedStatement) -> dict[str, object] | None:
+    from app.cashflow.income_type import preview_hint
+
+    try:
+        return preview_hint(parsed)
+    except Exception:  # noqa: BLE001 - a hint is optional; the pipeline reads the type properly anyway
+        return None
 
 
 def unreadable_message(reason: str | None, *, model_available: bool, vision_available: bool) -> str | None:

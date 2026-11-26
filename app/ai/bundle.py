@@ -43,6 +43,17 @@ def allowed_numbers(case: Case) -> dict[str, str]:
         "indicative_annual_rate": pct(float(p.indicative_annual_rate)) if p.indicative_annual_rate else "n/a",
         "policy_tenure": f"{p.tenure_months} months",
     }
+    if case.product == "used_car" and case.vehicle:
+        from app.risk.engine import vehicle_loan_cap
+
+        v = case.vehicle
+        nums |= {"vehicle_price": f"₹{inr(v.purchase_price)}", "vehicle_year": str(v.manufacture_year),
+                 "vehicle_age": f"{v.age_years():.1f} years", "vehicle_loan_cap": f"₹{inr(vehicle_loan_cap(case))}",
+                 "assessed_monthly_income": f"₹{inr(f.get('assessed_monthly_income', 0))}"}
+        if v.valuation is not None:
+            nums["vehicle_valuation"] = f"₹{inr(v.valuation)}"
+        if case.income_profile.get("salary_monthly"):
+            nums["salary_monthly"] = f"₹{inr(case.income_profile['salary_monthly'])}"
     return nums
 
 
@@ -67,6 +78,8 @@ def build_bundle(case: Case, critic_issues: list[dict[str, Any]] | None = None) 
         "applicant": {"business_name": case.business_name, "jurisdiction": case.jurisdiction,
                       "requested_amount": f"₹{inr(case.requested_amount)}", "tenure_months": case.tenure_months,
                       "document_count": len(case.documents)},
+        "product": ("Used car loan, secured by the car" if case.product == "used_car"
+                    else "Unsecured MSME working-capital term loan"),
         "features": case.features,
         "signals": [{"code": s.code, "category": s.category, "severity": s.severity, "detector": s.detector,
                      "title": s.title, "explanation": s.explanation, "evidence_ids": s.evidence_ids}
@@ -76,10 +89,17 @@ def build_bundle(case: Case, critic_issues: list[dict[str, Any]] | None = None) 
                   "strengths": [r.model_dump() for r in case.score.strengths]},
         "policy": {"outcome": case.policy.outcome.value, "reason_codes": case.policy.reason_codes,
                    "triggered_clauses": case.policy.triggered_rules, "conditions": case.policy.conditions},
-        "policy_clauses": {cid: clause_text(cid, case.jurisdiction) for cid in case.policy.triggered_rules},
+        "policy_clauses": {cid: clause_text(cid, case.policy_set) for cid in case.policy.triggered_rules},
         "evidence_catalogue": catalogue,
         "allowed_numbers": allowed_numbers(case),
     }
+    if case.product == "used_car" and case.vehicle:
+        v = case.vehicle
+        bundle["vehicle"] = {"car": f"{v.make} {v.model} ({v.manufacture_year})", "seller": v.seller,
+                             "odometer_km": v.odometer_km, "valuation_recorded": v.valuation is not None}
+        bundle["income"] = {k: case.income_profile.get(k) for k in ("type", "confidence", "reasons", "employer")} | {
+            "officer_override": (case.income_profile.get("override") or {}).get("type"),
+            "assessed_on": "net monthly salary" if case.income_type == "salaried" else "monthly business surplus"}
     if critic_issues:
         bundle["critic_issues"] = critic_issues
     return bundle

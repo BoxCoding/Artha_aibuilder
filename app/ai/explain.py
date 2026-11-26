@@ -43,7 +43,7 @@ def _approved_material(case: Case, lang: str) -> dict[str, Any]:
     if outcome in (Outcome.APPROVE, Outcome.APPROVE_WITH_CONDITIONS):
         if amount < case.requested_amount:
             sentences.append(t["reduced_amount"][lang].format(requested=inr(case.requested_amount)))
-        rate = case.policy.indicative_annual_rate or (band_rate(case.score.band, case.jurisdiction)
+        rate = case.policy.indicative_annual_rate or (band_rate(case.score.band, case.policy_set)
                                                       if case.score else None)
         if rate:
             key_terms.append(t["key_terms"][lang].format(emi=inr(emi(amount, rate, tenure)), tenure=tenure,

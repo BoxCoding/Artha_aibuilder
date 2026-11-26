@@ -321,7 +321,7 @@ def rule_identity_consistency(case: Case) -> list[Signal]:
     signals: list[Signal] = []
     for n, doc in enumerate(case.documents):
         holder = (doc.header.account_holder or "").strip()
-        if not holder or names_match(holder, applicant.full_name, applicant.business_name):
+        if not holder or names_match(holder, applicant.full_name, *filter(None, [applicant.business_name])):
             continue
         ev_id = f"ev-{doc.doc_id}-header"
         if ev_id not in case.evidence:

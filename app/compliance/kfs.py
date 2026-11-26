@@ -38,7 +38,7 @@ def monthly_irr(net: float, instalment: float, months: int) -> float:
 
 
 def build_kfs(case_id: str, principal: Decimal, annual_rate: Decimal, months: int,
-              business_name: str) -> dict[str, Any]:
+              business_name: str, vehicle: Any = None) -> dict[str, Any]:
     settings = get_settings()
     instalment = Decimal(emi_amount(principal, annual_rate, months))
     fee = (principal * Decimal(str(settings.processing_fee_pct)) / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
@@ -64,7 +64,11 @@ def build_kfs(case_id: str, principal: Decimal, annual_rate: Decimal, months: in
         "case_id": case_id,
         "generated_at": now.isoformat(timespec="seconds"),
         "valid_until": (now + timedelta(days=3)).isoformat(timespec="seconds"),
-        "loan_type": "Unsecured MSME working-capital term loan",
+        "loan_type": "Used car loan, secured by hypothecation of the car" if vehicle else
+                     "Unsecured MSME working-capital term loan",
+        **({"security": f"Hypothecation of {vehicle.make} {vehicle.model} ({vehicle.manufacture_year}), registration "
+                        f"{vehicle.registration_number}, endorsed on the RC in the lender's favour",
+            "insurance": "Comprehensive insurance with the lender as loss payee for the full tenure"} if vehicle else {}),
         "sanctioned_amount": _money(principal),
         "tenure_months": months,
         "instalment_frequency": "Monthly",

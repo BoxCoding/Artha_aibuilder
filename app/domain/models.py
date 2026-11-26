@@ -1,12 +1,14 @@
 """Domain entities. Money is always Decimal; LLM-facing schemas live in app/ai/schemas.py."""
 from __future__ import annotations
 
+import re
+
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.kyc import ApplicantProfile
 
@@ -236,6 +238,41 @@ class Explanation(Strict):
     author: Literal["gemini", "ollama", "templates"]
 
 
+class Vehicle(Strict):
+    """The car a used-car loan buys. The customer gives the car and the price agreed with the seller; a loan
+    officer adds the inspection valuation, and the loan is capped on the lower of the two."""
+    make: str = Field(min_length=2, max_length=40)
+    model: str = Field(min_length=1, max_length=60)
+    manufacture_year: int = Field(ge=1990, le=2100)
+    registration_number: str = Field(min_length=6, max_length=13)
+    odometer_km: int | None = Field(default=None, ge=0, le=1_000_000)
+    seller: Literal["dealer", "individual"] = "dealer"
+    purchase_price: Decimal = Field(gt=0, le=Decimal("10000000"))
+    valuation: Decimal | None = None
+    valued_by: str | None = None
+    valued_at: datetime | None = None
+
+    @field_validator("registration_number")
+    @classmethod
+    def _registration(cls, v: str) -> str:
+        v = re.sub(r"[\s\-]", "", v).upper()
+        if not (re.fullmatch(r"[A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,4}", v) or re.fullmatch(r"\d{2}BH\d{4}[A-Z]{1,2}", v)):
+            raise ValueError("Enter the registration number as on the RC, e.g. MH12AB1234.")
+        return v
+
+    @field_validator("manufacture_year")
+    @classmethod
+    def _year(cls, v: int) -> int:
+        if v > utcnow().year:
+            raise ValueError("The year of manufacture cannot be in the future.")
+        return v
+
+    def age_years(self, on: date | None = None) -> float:
+        """Age from 1 July of the manufacture year: the RC shows the year, not the month."""
+        on = on or utcnow().date()
+        return round((on - date(self.manufacture_year, 7, 1)).days / 365.25, 2)
+
+
 class Case(Strict):
     case_id: str
     owner_uid: str
@@ -245,6 +282,11 @@ class Case(Strict):
     tenure_months: int
     language: str = "en"
     jurisdiction: str = "IN"
+    product: Literal["working_capital", "used_car"] = "working_capital"
+    vehicle: Vehicle | None = None
+    # How the applicant earns, read from the bank data (not declared): detected type, the salary it rests
+    # on, the customer's follow-up answers, and any officer override with its reason.
+    income_profile: dict[str, Any] = Field(default_factory=dict)
     applicant: ApplicantProfile | None = None
     channel: Literal["self", "assisted"] = "self"
     sourced_by: str | None = None
@@ -276,6 +318,16 @@ class Case(Strict):
     ai_mode: str = "offline"
     token_usage: int = 0
     failure_reason: str | None = None
+
+    @property
+    def policy_set(self) -> str:
+        """Which policy file decides this case: one per jurisdiction and product."""
+        return self.jurisdiction if self.product == "working_capital" else f"{self.jurisdiction}_{self.product}"
+
+    @property
+    def income_type(self) -> str | None:
+        """salaried / self_employed: the officer's override if any, else what the bank data showed."""
+        return (self.income_profile.get("override") or {}).get("type") or self.income_profile.get("type")
 
 
 class AuditEvent(Strict):

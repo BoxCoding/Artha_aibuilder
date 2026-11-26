@@ -427,10 +427,11 @@ function field(grid, label, node, hint) {
 function renderApply() {
   show("apply");
   const officer = state.me.role === "loan_officer";
-  $("apply-title").textContent = officer ? "New customer application" : "Apply for working capital";
+  $("apply-title").textContent = officer ? "New customer application" : "Apply for a loan";
   const form = $("apply-form");
   form.replaceChildren();
   state.caseId = null;
+  state.product = "working_capital";
   const clearBtn = button("Clear form", "ghost small-btn");
 
   if (state.config?.demo_mode) {
@@ -441,6 +442,12 @@ function renderApply() {
         business_start_year: "2019", address_line: "12 Temple Street, Jayanagar", city: "Bengaluru", state: "Karnataka",
         pincode: "560041" };
       Object.entries(demo).forEach(([k, v]) => { const n = $(`a-${k}`); if (n) n.value = v; });
+      if (state.product === "used_car") {
+        Object.entries({ make: "Maruti", model: "Swift VXI", manufacture_year: "2021", registration_number: "MH12AB1234",
+          odometer_km: "42000", seller: "dealer", purchase_price: "600000" }).forEach(([k, v]) => { $(`v-${k}`).value = v; });
+        $("f-amount").value = "450000";
+        $("f-tenure").value = "48";
+      }
       $("f-consent").checked = true;
       guide?.onView(currentView);
     });
@@ -464,6 +471,14 @@ function renderApply() {
     return grid;
   };
 
+  // Which loan: the used-car loan never asks whether the customer is salaried or self-employed; the bank data shows it.
+  const picker = el("div", "segmented");
+  picker.setAttribute("role", "radiogroup");
+  picker.setAttribute("aria-label", "Which loan");
+  const productBox = el("fieldset", "form-section");
+  productBox.append(el("legend", null, "Which loan?"), picker);
+  form.appendChild(productBox);
+
   const person = section(officer ? "Customer" : "About you",
     "As on the customer's PAN card. Aadhaar is not collected.");
   const fullName = field(person, "Full name", control("input", "a-full_name", { maxLength: 120, autocomplete: "name",
@@ -475,7 +490,19 @@ function renderApply() {
   field(person, "Date of birth", control("input", "a-date_of_birth", { type: "date" }));
   fullName.required = true;
 
+  const car = section("The car", "As on the registration certificate (RC), and the price agreed with the seller. "
+    + "A loan officer records the inspection valuation later.");
+  const carBox = sections[sections.length - 1];
+  field(car, "Make", control("input", "v-make", { maxLength: 40, placeholder: "e.g. Maruti" }));
+  field(car, "Model and variant", control("input", "v-model", { maxLength: 60, placeholder: "e.g. Swift VXI" }));
+  field(car, "Year of manufacture", control("input", "v-manufacture_year", { type: "number", min: 1990, max: new Date().getFullYear() }));
+  field(car, "Registration number", control("input", "v-registration_number", { maxLength: 13, placeholder: "MH12AB1234" }));
+  field(car, "Kilometres driven (optional)", control("input", "v-odometer_km", { type: "number", min: 0 }));
+  field(car, "Buying from", options(control("select", "v-seller"), [["dealer", "A dealer"], ["individual", "An individual"]], "dealer"));
+  field(car, "Agreed price (₹)", control("input", "v-purchase_price", { type: "number", min: 50000, step: 1000 }));
+
   const business = section("Business");
+  const businessBox = sections[sections.length - 1];
   field(business, "Business name", control("input", "a-business_name", { maxLength: 120 }));
   field(business, "Constitution", options(control("select", "a-constitution"), CONSTITUTIONS, "proprietorship"));
   field(business, "Industry", options(control("select", "a-industry"), INDUSTRIES.map((i) => [i, i]), "Retail trade"));
@@ -484,18 +511,44 @@ function renderApply() {
   field(business, "GSTIN (optional)", control("input", "a-gstin", { maxLength: 15, placeholder: "29ABCPE1234F1Z5" }));
 
   const address = section("Business address");
+  const addressBox = sections[sections.length - 1];
   field(address, "Address", control("input", "a-address_line", { maxLength: 200, autocomplete: "street-address" }));
   field(address, "City", control("input", "a-city", { maxLength: 60 }));
   field(address, "State", options(control("select", "a-state"), INDIAN_STATES.map((x) => [x, x]), "Karnataka"));
   field(address, "PIN code", control("input", "a-pincode", { inputMode: "numeric", maxLength: 6 }));
 
   const loan = section("Loan");
-  field(loan, "Amount needed (₹)", control("input", "f-amount", { type: "number", value: "300000", min: 50000,
-    max: 1000000, step: 5000 }), "₹50,000 to ₹10,00,000");
-  field(loan, "Repay over", options(control("select", "f-tenure"), [12, 18, 24, 36].map((m) => [String(m), `${m} months`]), "24"));
+  const amountField = field(loan, "Amount needed (₹)", control("input", "f-amount", { type: "number", value: "300000",
+    min: 50000, max: 1000000, step: 5000 }), "₹50,000 to ₹10,00,000");
+  field(loan, "Repay over", control("select", "f-tenure"));
   field(loan, "Purpose", control("input", "a-loan_purpose", { value: "Working capital", maxLength: 200 }));
   field(loan, "Language for the result", options(control("select", "f-lang"),
     [["en", "English"], ["hi", "हिन्दी"], ["id", "Bahasa Indonesia"]], "en"));
+
+  const chooseProduct = (product) => {
+    state.product = product;
+    const usedCar = product === "used_car";
+    const limits = PRODUCT_LIMITS[product];
+    picker.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.product === product)));
+    carBox.hidden = !usedCar;
+    businessBox.hidden = usedCar;
+    addressBox.querySelector("legend").textContent = usedCar ? "Address" : "Business address";
+    $("f-amount").min = limits.min;
+    $("f-amount").max = limits.max;
+    amountField.querySelector(".hint").textContent = `₹${limits.min.toLocaleString("en-IN")} to ₹${limits.max.toLocaleString("en-IN")}`;
+    $("f-tenure").replaceChildren();
+    options($("f-tenure"), limits.tenures.map((m) => [String(m), `${m} months`]), String(limits.tenure));
+    $("a-loan_purpose").value = usedCar ? "Buying a used car" : "Working capital";
+    if (!officer) $("apply-title").textContent = usedCar ? "Apply for a used car loan" : "Apply for working capital";
+  };
+  [["used_car", "Used car loan"], ["working_capital", "Business working capital"]].forEach(([key, label]) => {
+    const b = button(label, "ghost", () => chooseProduct(key));
+    b.type = "button";
+    b.dataset.product = key;
+    b.setAttribute("role", "radio");
+    picker.appendChild(b);
+  });
+  chooseProduct("working_capital");
 
   const consentBox = el("div", "field consent");
   const consentLabel = el("label", "small");
@@ -523,19 +576,24 @@ function renderApply() {
     note.textContent = "";
     try {
       const applicant = {};
+      const usedCar = state.product === "used_car";
       ["full_name", "mobile", "email", "pan", "date_of_birth", "business_name", "constitution", "industry",
        "business_start_year", "udyam_number", "gstin", "address_line", "city", "state", "pincode", "loan_purpose"]
+        .filter((key) => !(usedCar && BUSINESS_KEYS.includes(key)))
         .forEach((key) => {
           const value = $(`a-${key}`).value.trim();
           if (value !== "") applicant[key] = key === "business_start_year" ? Number(value) : value;
         });
       state.lang = $("f-lang").value;
+      const vehicle = usedCar ? Object.fromEntries(CAR_FIELDS.map(([key]) => [key, $(`v-${key}`).value.trim()])
+        .filter(([, v]) => v !== "").map(([k, v]) => [k, ["manufacture_year", "odometer_km", "purchase_price"].includes(k) ? Number(v) : v])) : null;
       const created = await post("/api/cases", {
-        applicant, requested_amount: Number($("f-amount").value), tenure_months: Number($("f-tenure").value),
-        language: state.lang, consent: check.checked,
+        applicant, product: state.product, vehicle, requested_amount: Number($("f-amount").value),
+        tenure_months: Number($("f-tenure").value), language: state.lang, consent: check.checked,
       });
       state.caseId = created.case_id;
       sections.forEach((box) => { box.disabled = true; });
+      productBox.disabled = true;
       check.disabled = true;
       next.remove();
       clearBtn.remove();
@@ -623,8 +681,33 @@ const REQUIRED_FIELDS = [
   ["pincode", (v) => /^[1-9]\d{5}$/.test(v), "PIN code should be 6 digits."],
 ];
 // [field id, message] for every required field that is empty or fails its check.
+const BUSINESS_KEYS = ["business_name", "constitution", "industry", "business_start_year", "udyam_number", "gstin"];
+const CAR_FIELDS = [["make", (v) => v.length >= 2], ["model", (v) => v.length >= 1],
+  ["manufacture_year", (v) => Number(v) >= 1990 && Number(v) <= new Date().getFullYear(), "Year of manufacture looks wrong."],
+  ["registration_number", (v) => /^([A-Z]{2}\d{1,2}[A-Z]{0,3}\d{1,4}|\d{2}BH\d{4}[A-Z]{1,2})$/i.test(v.replace(/[\s-]/g, "")),
+   "Registration number should look like MH12AB1234."],
+  ["odometer_km", () => true], ["seller", () => true],
+  ["purchase_price", (v) => Number(v) >= 50000, "Enter the price agreed with the seller."]];
+// Limits mirror the product's policy file; the server checks them again.
+const PRODUCT_LIMITS = {
+  working_capital: { min: 50000, max: 1000000, tenures: [12, 18, 24, 36], tenure: 24 },
+  used_car: { min: 100000, max: 1500000, tenures: [12, 24, 36, 48, 60], tenure: 48 },
+};
+function carProblems() {
+  if (state.product !== "used_car") return [];
+  const problems = CAR_FIELDS.flatMap(([key, ok, invalid]) => {
+    const value = $(`v-${key}`).value.trim();
+    if (!value) return key === "odometer_km" ? [] : [[`v-${key}`, `${fieldLabel(`v-${key}`)} is missing.`]];
+    return ok(value) ? [] : [[`v-${key}`, invalid || `${fieldLabel(`v-${key}`)} looks wrong.`]];
+  });
+  if (Number($("f-amount").value) > Number($("v-purchase_price").value)) {
+    problems.push(["f-amount", "The loan cannot be more than the car's price."]);
+  }
+  return problems;
+}
 function applicantProblems() {
-  return REQUIRED_FIELDS.flatMap(([key, ok, invalid]) => {
+  return REQUIRED_FIELDS.filter(([key]) => !(state.product === "used_car" && BUSINESS_KEYS.includes(key)))
+    .flatMap(([key, ok, invalid]) => {
     const id = `a-${key}`;
     const value = $(id)?.value.trim() || "";
     if (!value) return [[id, `${fieldLabel(id)} is missing.`]];
@@ -718,9 +801,12 @@ function showReview(form, voiceFilled, next, note, save) {
     if (!node) return "";
     return node.tagName === "SELECT" ? node.options[node.selectedIndex]?.text || "" : node.value.trim();
   };
-  const problems = applicantProblems();
+  const problems = applicantProblems().concat(carProblems());
   const amount = Number($("f-amount").value);
-  if (!(amount >= 50000 && amount <= 1000000)) problems.push(["f-amount", "Amount should be between ₹50,000 and ₹10,00,000."]);
+  const limits = PRODUCT_LIMITS[state.product || "working_capital"];
+  if (!(amount >= limits.min && amount <= limits.max)) {
+    problems.push(["f-amount", `Amount should be between ₹${limits.min.toLocaleString("en-IN")} and ₹${limits.max.toLocaleString("en-IN")}.`]);
+  }
   if (!$("f-consent").checked) problems.push(["f-consent", "Please tick the consent box."]);
 
   const panel = el("div", "review-panel");
@@ -729,11 +815,14 @@ function showReview(form, voiceFilled, next, note, save) {
   panel.appendChild(el("h3", null, "Please check your details before saving"));
   if (voiceFilled.size) panel.appendChild(el("p", "small", "🎤 = filled by voice. Make sure these are exactly right."));
   const list = el("dl", "review-list");
-  Object.values(VOICE_FIELDS).concat(["f-lang"]).forEach((id) => {
+  const usedCar = state.product === "used_car";
+  const ids = Object.values(VOICE_FIELDS).filter((id) => !(usedCar && BUSINESS_KEYS.some((k) => id === `a-${k}`)))
+    .concat(usedCar ? CAR_FIELDS.map(([k]) => `v-${k}`) : [], ["f-lang"]);
+  ids.forEach((id) => {
     const v = value(id);
     if (!v) return;
     const dt = el("dt", null, fieldLabel(id));
-    const dd = el("dd", null, id === "f-amount" ? `₹${Number(v).toLocaleString("en-IN")}` : v);
+    const dd = el("dd", null, ["f-amount", "v-purchase_price"].includes(id) ? `₹${Number(v).toLocaleString("en-IN")}` : v);
     if (voiceFilled.has(id)) dd.appendChild(el("span", "voice-badge", " 🎤"));
     list.append(dt, dd);
   });
@@ -814,7 +903,8 @@ function renderStatements(form) {
     const demo = el("div", "demo-hint");
     demo.appendChild(el("p", "small", "Demo mode: attach a generated sample statement instead."));
     const pick = options(control("select", "f-sample"), [["meena", "Steady UPI income"],
-      ["rapid", "Edited statement"], ["kiran", "Bounced instalments"]], "meena");
+      ["rapid", "Edited statement"], ["kiran", "Bounced instalments"], ["ravi", "Salaried employee"]],
+      state.product === "used_car" ? "ravi" : "meena");
     const add = el("button", "ghost", "Attach sample");
     add.addEventListener("click", async () => {
       try {
@@ -855,6 +945,33 @@ function renderStatements(form) {
   box.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// After the first statement is read: say what the bank data shows and ask only what fits it. Nothing here is
+// required, and nothing the customer types changes the reading; an officer sees both.
+function showIncomeFollowUp(section, hint) {
+  if (!section || section.querySelector(".income-follow-up")) return;
+  const salaried = hint.type === "salaried";
+  const box = el("div", "income-follow-up notice");
+  box.appendChild(el("p", null, salaried
+    ? `Your account shows a regular salary${hint.employer ? ` from ${hint.employer}` : ""}. Please confirm your employer.`
+    : "Your account looks like a business or self-employed income. Tell us about the business (optional)."));
+  if (hint.confidence < 0.7) box.appendChild(el("p", "small muted", "It isn't fully clear, so a credit officer will confirm it."));
+  const grid = el("div", "form-grid");
+  const inputs = salaried
+    ? [["employer_name", "Employer", hint.employer || ""]]
+    : [["business_name", "Business name", ""], ["gstin", "GSTIN (optional)", ""]];
+  inputs.forEach(([key, label, value]) => field(grid, label, control("input", `fu-${key}`, { maxLength: key === "gstin" ? 15 : 120, value })));
+  const save = el("button", "ghost small-btn", "Save");
+  save.type = "button";
+  const note = el("span", "small muted");
+  save.addEventListener("click", async () => {
+    const payload = Object.fromEntries(inputs.map(([key]) => [key, $(`fu-${key}`).value.trim() || null]));
+    try { await post(`/api/cases/${state.caseId}/follow-up`, payload); note.textContent = "Saved."; }
+    catch (error) { note.textContent = error.message; }
+  });
+  box.append(grid, save, note);
+  section.insertBefore(box, section.querySelector("button.stamp"));
+}
+
 function describePreview(p) {
   const period = p.period_from ? `${fmtDate(p.period_from)} – ${fmtDate(p.period_to)}` : "period not printed";
   const parts = [p.bank, p.account_holder, p.account_last4 ? `A/c XX${p.account_last4}` : null, period];
@@ -876,6 +993,7 @@ function addUploadRow(list, meta, file, done, sync) {
   const succeed = (result) => {
     row.className = "upload ok";
     row.dataset.docId = result.doc_id;
+    if (result.preview?.income_hint && state.product === "used_car") showIncomeFollowUp(row.closest("fieldset"), result.preview.income_hint);
     status.textContent = result.preview ? describePreview(result.preview) : result.label || "Sample statement attached";
     if (result.note) status.textContent += ` (${result.note})`;
     guide?.onView(currentView);
@@ -1431,7 +1549,7 @@ function renderCaseHead() {
 }
 
 const TABS = [["memo", "Memo"], ["integrity", "Integrity"], ["cashflow", "Cash flow"], ["policy", "Policy"],
-              ["compliance", "Compliance"], ["copilot", "Co-pilot"], ["agents", "Agents"], ["audit", "Pipeline"]];
+              ["compliance", "Compliance"], ["copilot", "Co-pilot"], ["car", "Car & income"], ["agents", "Agents"], ["audit", "Pipeline"]];
 const CHECK_LABEL = { pass: "pass", attention: "needs attention", pending: "pending", fail: "fail", "n/a": "n/a" };
 const CHECK_CLASS = { pass: "info", attention: "medium", pending: "low", fail: "high", "n/a": "low" };
 
@@ -1518,7 +1636,8 @@ function renderCompliance(panel, data) {
 function renderTabs() {
   const tabs = $("case-tabs");
   tabs.replaceChildren();
-  const visible = TABS.filter(([key]) => !(key === "copilot" && state.me.role === "loan_officer"));
+  const visible = TABS.filter(([key]) => !(key === "copilot" && state.me.role === "loan_officer")
+    && !(key === "car" && state.caseData.product !== "used_car"));
   if (!visible.some(([key]) => key === state.tab)) state.tab = visible[0][0];
   visible.forEach(([key, label]) => {
     const tab = button(label, null, () => { state.tab = key; renderTabs(); });
@@ -1647,6 +1766,8 @@ function renderPanel() {
     renderCompliance(panel, data);
   } else if (state.tab === "copilot") {
     renderCopilot(panel);
+  } else if (state.tab === "car") {
+    renderCarLoan(panel, data);
   } else if (state.tab === "agents") {
     renderAgentGraph(panel, data);
   } else {
@@ -1665,6 +1786,85 @@ function renderPanel() {
     });
     panel.appendChild(docs);
   }
+}
+
+// A used-car loan: the car and what it can secure, and how the applicant earns as read from the bank data.
+// Officers record the valuation here, and a credit officer can confirm or correct the income type.
+function renderCarLoan(panel, data) {
+  const v = data.vehicle;
+  const ip = data.income_profile;
+  const inr0 = (n) => `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+  const refresh = async () => { state.caseData = await api(`/api/cases/${state.caseId}`); renderCaseHead(); renderPanel(); renderDecision(); };
+  const open = !data.decision;
+  const rows = (pairs) => {
+    const t = el("table", "agent-detail");
+    pairs.filter(([, value]) => value != null && value !== "").forEach(([k, value]) => {
+      const tr = el("tr");
+      tr.append(el("td", null, k), el("td", null, String(value)));
+      t.appendChild(tr);
+    });
+    return t;
+  };
+
+  if (v) {
+    const card = el("div", "finding");
+    card.appendChild(el("h3", null, `${v.make} ${v.model} · ${v.manufacture_year}`));
+    card.appendChild(rows([["Registration", v.registration_number], ["Kilometres", v.odometer_km?.toLocaleString("en-IN")],
+      ["Buying from", v.seller === "dealer" ? "A dealer" : "An individual"], ["Agreed price", inr0(v.purchase_price)],
+      ["Inspection valuation", v.valuation ? `${inr0(v.valuation)}${v.valued_by ? ` · by ${v.valued_by}` : ""}` : "Not recorded yet"],
+      ["Car's age", `${v.age_years.toFixed(1)} years`], ["Loan-to-value", `${Math.round(v.ltv_share * 100)}% of the lower of price and valuation`],
+      ["Most the car can secure", inr0(v.loan_cap)]]));
+    if (!v.valuation) card.appendChild(el("p", "small notice", "Approval is blocked until a loan officer records the inspection valuation."));
+    if (open && ["loan_officer", "underwriter"].includes(state.me.role)) {
+      const input = control("input", "val-amount", { type: "number", min: 10000, step: 1000, placeholder: "Valuation in ₹",
+        value: v.valuation || "" });
+      const go = el("button", "ghost small-btn", v.valuation ? "Update valuation" : "Record valuation");
+      const note = el("span", "small muted");
+      go.addEventListener("click", async () => {
+        try { await post(`/api/cases/${state.caseId}/vehicle/valuation`, { valuation: Number(input.value) }); await refresh(); }
+        catch (error) { note.textContent = error.message; }
+      });
+      const bar = el("div", "row");
+      bar.append(input, go, note);
+      card.appendChild(bar);
+    }
+    panel.appendChild(card);
+  }
+
+  const income = el("div", "finding");
+  if (!ip) {
+    income.appendChild(el("p", "muted", "How the applicant earns is read from the bank data once the analysis runs."));
+    panel.appendChild(income);
+    return;
+  }
+  const label = { salaried: "Salaried", self_employed: "Self-employed" };
+  income.appendChild(el("h3", null, `${label[ip.current_type] || ip.current_type}`
+    + (ip.override ? " · confirmed by a credit officer" : ` · read from the bank data (${Math.round(ip.confidence * 100)}% sure)`)));
+  const reasons = el("ul", "small");
+  (ip.reasons || []).forEach((r) => reasons.appendChild(el("li", null, r)));
+  income.appendChild(reasons);
+  income.appendChild(rows([["Employer seen in the data", ip.employer], ["Net monthly salary", ip.salary_monthly ? inr0(ip.salary_monthly) : null],
+    ["Months with salary", ip.salary_months || null], ["Other income a month", ip.other_income_monthly ? inr0(ip.other_income_monthly) : null],
+    ["Instalment sized on", ip.current_type === "salaried" ? "half of net salary, less existing EMIs" : "half of business surplus, less existing EMIs"],
+    ["Assessed monthly income", data.features?.assessed_monthly_income != null ? inr0(data.features.assessed_monthly_income) : null],
+    ["Customer said: employer", ip.declared?.employer_name], ["Customer said: business", ip.declared?.business_name],
+    ["Customer said: GSTIN", ip.declared?.gstin],
+    ["Originally read as", ip.override ? label[ip.type] : null], ["Officer's reason", ip.override?.reason]]));
+  if (data.evidence?.["ev-computed-salary"]) income.appendChild(citeRow(["ev-computed-salary"]));
+  if (open && state.me.role === "underwriter") {
+    const select = options(control("select", "it-type"), [["salaried", "Salaried"], ["self_employed", "Self-employed"]], ip.current_type);
+    const reason = control("input", "it-reason", { maxLength: 400, placeholder: "Reason, e.g. payslips and employer letter seen" });
+    const go = el("button", "ghost small-btn", "Confirm income type");
+    const note = el("span", "small muted");
+    go.addEventListener("click", async () => {
+      try { await post(`/api/cases/${state.caseId}/income-type`, { income_type: select.value, reason: reason.value }); await refresh(); }
+      catch (error) { note.textContent = error.message; }
+    });
+    const bar = el("div", "row");
+    bar.append(select, reason, go, note);
+    income.appendChild(bar);
+  }
+  panel.appendChild(income);
 }
 
 // How the agents hand work to each other, drawn from this case's own run: the same graph the ADK workflow runs
@@ -1898,6 +2098,7 @@ async function askCopilot(question) {
 const FEATURE_LABELS = {
   median_monthly_inflow: "Median monthly income", avg_daily_balance: "Average daily balance",
   monthly_surplus: "Monthly surplus", existing_emi_monthly: "Existing EMIs a month", obligation_ratio: "EMIs / income",
+  salary_monthly: "Net monthly salary", assessed_monthly_income: "Assessed monthly income",
   inflow_cv: "Income variability", inflow_trend: "Income trend", abb_to_inflow: "Balance / income",
   digital_share: "Digital income share", cash_deposit_share: "Cash deposit share",
   low_balance_days_share: "Low-balance days", top_counterparty_share: "Largest payer's share",

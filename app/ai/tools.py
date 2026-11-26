@@ -17,7 +17,7 @@ from typing import Any
 from app.cashflow.categorise import CATEGORIES
 from app.domain.formatting import inr
 from app.domain.models import Case
-from app.risk.engine import apply_policy, load_policy, score
+from app.risk.engine import apply_policy, load_policy, policy_facts, score
 
 MAX_ROWS = 12
 
@@ -134,7 +134,7 @@ class CaseToolbox:
             result: dict[str, Any] = {"error": "case_not_scored"}
         else:
             outcome = apply_policy(case.features, case.signals, case.score, Decimal(int(amount)),
-                                   int(tenure_months), case.jurisdiction)
+                                   int(tenure_months), case.policy_set, policy_facts(case))
             result = {"requested": inr(Decimal(int(amount))), "tenure_months": outcome.tenure_months,
                       "outcome": outcome.outcome.value, "approved_amount": inr(outcome.recommended_amount),
                       "reason_codes": outcome.reason_codes, "conditions": outcome.conditions,

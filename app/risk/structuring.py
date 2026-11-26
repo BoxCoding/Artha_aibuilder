@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from app.domain.formatting import emi, inr
 from app.domain.models import Case, Outcome
-from app.risk.engine import apply_policy, load_policy
+from app.risk.engine import apply_policy, load_policy, policy_facts
 
 APPROVING = (Outcome.APPROVE, Outcome.APPROVE_WITH_CONDITIONS)
 
@@ -83,14 +83,14 @@ def structure_options(case: Case, max_options: int = 3) -> StructuringResult:
     # Outcomes that follow from the risk band do not move with amount or tenure: every candidate
     # structure is scored on the same band, so it would come back with the same answer. Say so,
     # and point at the improvement plan, which is the route that actually changes a band.
-    band_outcome = Outcome(load_policy(case.jurisdiction)["bands"][case.score.band])
+    band_outcome = Outcome(load_policy(case.policy_set)["bands"][case.score.band])
     if band_outcome not in APPROVING and "RC-LOW-REPAYMENT-CAPACITY" not in case.policy.reason_codes:
         return StructuringResult((), ("POL-BANDS",),
                                  f"Band {case.score.band} maps to {band_outcome.value.replace('_', ' ').lower()} "
                                  "whatever the amount or tenure, so no structure changes this. The improvement "
                                  "plan shows what would move the band itself.")
 
-    sizing = load_policy(case.jurisdiction)["sizing"]
+    sizing = load_policy(case.policy_set)["sizing"]
     minimum = Decimal(sizing["min_amount"])
     step = Decimal(sizing["round_down_to"])
     requested = case.requested_amount
@@ -101,7 +101,8 @@ def structure_options(case: Case, max_options: int = 3) -> StructuringResult:
     for tenure in sorted(sizing["allowed_tenures"], reverse=True):
         amount = (requested / step).to_integral_value() * step
         while amount >= minimum:
-            result = apply_policy(case.features, case.signals, case.score, amount, tenure, case.jurisdiction)
+            result = apply_policy(case.features, case.signals, case.score, amount, tenure, case.policy_set,
+                                  policy_facts(case))
             if result.outcome in APPROVING and result.recommended_amount >= minimum:
                 final = result.recommended_amount
                 rate = result.indicative_annual_rate

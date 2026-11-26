@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.domain.formatting import emi, inr, pct
 from app.domain.kyc import ApplicantProfile
-from app.domain.models import Case, Explanation, Role
-from app.risk.engine import band_rate, clause_text
+from app.domain.models import Case, Explanation, Role, Vehicle
+from app.risk.engine import band_rate, clause_text, load_policy
 
 
 def effective_rate(case: Case) -> Any:
@@ -17,7 +17,7 @@ def effective_rate(case: Case) -> Any:
     policy engine did not itself recommend."""
     if case.policy and case.policy.indicative_annual_rate:
         return case.policy.indicative_annual_rate
-    return band_rate(case.score.band, case.jurisdiction) if case.score else None
+    return band_rate(case.score.band, case.policy_set) if case.score else None
 
 
 class LoginRequest(BaseModel):
@@ -41,10 +41,32 @@ class ProfileRequest(BaseModel):
 class CreateCaseRequest(BaseModel):
     applicant: ApplicantProfile
     business_name: str | None = Field(default=None, min_length=2, max_length=120)
-    requested_amount: int = Field(ge=50_000, le=1_000_000)
-    tenure_months: int = Field(ge=12, le=36)
+    product: Literal["working_capital", "used_car"] = "working_capital"
+    vehicle: Vehicle | None = None
+    requested_amount: int = Field(ge=50_000, le=10_000_000)
+    tenure_months: int = Field(ge=12, le=84)
     language: str = Field(default="en", max_length=5)
     consent: bool
+
+    @model_validator(mode="after")
+    def _fits_product(self) -> CreateCaseRequest:
+        """Amount and tenure within the product's own policy; what each product needs is present."""
+        sizing = load_policy("IN" if self.product == "working_capital" else f"IN_{self.product}")["sizing"]
+        if not int(sizing["min_amount"]) <= self.requested_amount <= int(sizing["max_amount"]):
+            raise ValueError(f"The amount must be between ₹{int(sizing['min_amount']):,} and "
+                             f"₹{int(sizing['max_amount']):,} for this loan.")
+        if self.tenure_months not in sizing["allowed_tenures"]:
+            raise ValueError("Repay over " + ", ".join(map(str, sizing["allowed_tenures"])) + " months.")
+        if self.product == "used_car":
+            if self.vehicle is None:
+                raise ValueError("Tell us about the car: make, model, year, registration and price.")
+            if self.vehicle.valuation is not None:
+                raise ValueError("The valuation is recorded by a loan officer after inspection.")
+            if self.requested_amount > self.vehicle.purchase_price:
+                raise ValueError("The loan cannot be more than the car's price.")
+        elif not (self.business_name or self.applicant.business_name):
+            raise ValueError("Enter the business name.")
+        return self
 
     @field_validator("language")
     @classmethod
@@ -119,6 +141,20 @@ def _progress(case: Case) -> list[dict[str, Any]]:
     return list(seen.values())
 
 
+def _vehicle(case: Case, staff: bool) -> dict[str, Any] | None:
+    """The car, with what it can secure under the LTV clause; the valuer's identity only for staff."""
+    from app.risk.engine import ltv_share, load_policy, vehicle_loan_cap
+
+    v = case.vehicle
+    if v is None:
+        return None
+    data = v.model_dump(mode="json", exclude=set() if staff else {"valued_by"})
+    data["age_years"] = v.age_years()
+    data["ltv_share"] = float(ltv_share(load_policy(case.policy_set), v.age_years()))
+    data["loan_cap"] = str(vehicle_loan_cap(case))
+    return data
+
+
 def borrower_view(case: Case, explanation: Explanation | None) -> dict[str, Any]:
     decision = case.decision
     payload: dict[str, Any] = {
@@ -130,6 +166,7 @@ def borrower_view(case: Case, explanation: Explanation | None) -> dict[str, Any]
         "documents": [{"doc_id": d.doc_id, "filename": d.filename} for d in case.documents],
         "kfs": case.kfs, "kfs_accepted_at": case.kfs_accepted_at,
         "recommendations": case.recommendations if decision else {},
+        "product": case.product, "vehicle": _vehicle(case, staff=False),
     }
     if decision and explanation:
         amount = decision.approved_amount
@@ -168,12 +205,14 @@ def staff_view(case: Case) -> dict[str, Any]:
         "features": case.features, "monthly": case.monthly,
         "evidence": {k: v.model_dump() for k, v in case.evidence.items()},
         "transaction_count": len(case.transactions),
+        "product": case.product, "vehicle": _vehicle(case, staff=True),
+        "income_profile": case.income_profile | {"current_type": case.income_type} if case.income_profile else None,
     }
     if case.score:
         payload["score"] = case.score.model_dump()
     if case.policy:
         payload["policy"] = case.policy.model_dump(mode="json") | {
-            "clauses": {c: clause_text(c, case.jurisdiction) for c in case.policy.triggered_rules},
+            "clauses": {c: clause_text(c, case.policy_set) for c in case.policy.triggered_rules},
             "recommended_amount_display": inr(case.policy.recommended_amount),
             "max_emi_capacity_display": inr(case.policy.max_emi_capacity),
         }

@@ -87,7 +87,7 @@ class ApplicantProfile(BaseModel):
     email: str | None = Field(default=None, max_length=254)
     pan: str
     date_of_birth: date | None = None
-    business_name: str = Field(min_length=2, max_length=120)
+    business_name: str | None = Field(default=None, min_length=2, max_length=120)  # not asked for a car loan
     constitution: Constitution = Constitution.PROPRIETORSHIP
     industry: str = Field(default="Other", max_length=60)
     business_start_year: int | None = Field(default=None, ge=1900, le=2100)
@@ -101,8 +101,8 @@ class ApplicantProfile(BaseModel):
 
     @field_validator("full_name", "business_name", "city", "state")
     @classmethod
-    def _single_spaced(cls, v: str) -> str:
-        return " ".join(v.split())
+    def _single_spaced(cls, v: str | None) -> str | None:
+        return " ".join(v.split()) if v else v
 
     @field_validator("mobile")
     @classmethod

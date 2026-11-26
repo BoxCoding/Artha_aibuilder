@@ -50,6 +50,8 @@ def compute_features(case: Case) -> tuple[dict[str, float], list[dict[str, str |
     counterparties: dict[str, Decimal] = defaultdict(Decimal)
     for t in txns:
         m = month_key(t.txn_date)
+        if t.category == "salary_credit" and t.txn_date.day >= 25:
+            m = month_key(t.txn_date + timedelta(days=8))  # paid early for next month; else one month gets two salaries
         if t.credit > 0 and t.category in BUSINESS_CREDIT:
             inflow[m] += t.credit
             cash += t.credit if t.category == "cash_deposit" else 0

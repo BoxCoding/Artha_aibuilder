@@ -64,7 +64,7 @@ def aml_signals(case: Case) -> list[Signal]:
     header_ev = next((f"ev-{d.doc_id}-header" for d in case.documents if f"ev-{d.doc_id}-header" in case.evidence), None)
     if applicant:
         for field, value in (("applicant", applicant.full_name), ("business", applicant.business_name)):
-            hit = match(value)
+            hit = match(value) if value else None  # a car loan has no business name
             if hit:
                 ev = header_ev or "ev-kyc"
                 case.evidence.setdefault(ev, Evidence(evidence_id=ev, doc_id=case.documents[0].doc_id if case.documents else "none",

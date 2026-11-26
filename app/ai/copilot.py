@@ -354,7 +354,7 @@ def compliance_answer(case: Case, question: str) -> CopilotAnswer | None:
         return CopilotAnswer(f"The KFS (APR {case.kfs.get('apr_pct')}%) has been issued but not yet accepted by the "
                              "customer; disbursal waits for acceptance.", kind=kind)
     if kind == "compliance:four_eyes":
-        threshold = float(load_policy(case.jurisdiction)["four_eyes_above"])
+        threshold = float(load_policy(case.policy_set)["four_eyes_above"])
         decision = case.decision or case.pending_decision
         amount = (decision.approved_amount if decision and decision.approved_amount
                   else case.policy.recommended_amount if case.policy else None)

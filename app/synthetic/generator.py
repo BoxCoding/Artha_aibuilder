@@ -91,6 +91,8 @@ class Profile:
     nach_return_months: list[int] = field(default_factory=list)  # month offsets with a bounced EMI
     seasonality: dict[int, float] = field(default_factory=dict)  # month offset -> multiplier
     window_dressing_cash: int = 0  # large round cash deposits in final 10 days
+    salary: float = 0.0  # salaried: one employer's NEFT credit around the 1st of every month
+    employer: str = "ORBIT SOFTWARE PVT LTD"
 
 
 def _ref(rng: random.Random) -> str:
@@ -117,6 +119,12 @@ def build_rows(p: Profile) -> tuple[list[Row], date]:
                 amt = max(800.0, rng.gauss(p.daily_upi_mean * season, p.daily_upi_sd))
                 month_credit_total += amt
                 rows.append(Row(day, "UPI COLLECT SETTLEMENT/PAYOUT", _ref(rng), credit=q(amt)))
+        if p.salary:
+            payday = ms - timedelta(days=1) if m_idx % 2 else ms  # paid on the last day or the 1st
+            payday = max(payday, p.start)
+            amt = p.salary * rng.uniform(0.98, 1.02)
+            month_credit_total += amt
+            rows.append(Row(payday, f"NEFT CR/{p.employer}/SALARY {ms:%b %Y}".upper(), _ref(rng), credit=q(round(amt))))
         for _ in range(p.neft_credits_per_month):
             day = ms + timedelta(days=rng.randrange(days_in_month))
             amt = max(5000.0, rng.gauss(p.neft_credit_mean * season, p.neft_credit_mean * 0.3))
@@ -324,6 +332,8 @@ PERSONAS: dict[str, SamplePersona] = {
                            "Auto parts trader. Statement has been edited to inflate income."),
     "kiran": SamplePersona("kiran", "Kiran Logistics", 500000, 24, "en",
                            "Transport operator with a running loan and recent bounced EMIs."),
+    "ravi": SamplePersona("ravi", "Ravi Kumar", 450000, 48, "en",
+                          "Salaried software engineer with a personal-loan EMI, buying a used car."),
 }
 
 
@@ -352,6 +362,11 @@ def persona_statement(key: str) -> Statement:
                     opening_balance=65000, neft_credits_per_month=8, neft_credit_mean=52000,
                     supplier_payments_per_month=10, supplier_payment_share=0.74, rent=18000, utilities=4000,
                     staff_payments=[16000, 15000, 15000], emi_amount=28500, nach_return_months=[3, 4, 5])
+        return statement_for(p)
+    if key == "ravi":
+        p = Profile(name="ravi", holder="RAVI KUMAR", bank="Kaveri Commercial Bank", seed=53, opening_balance=42000,
+                    salary=85000, supplier_payments_per_month=14, supplier_payment_share=0.45, rent=18000,
+                    utilities=2600, emi_amount=9200, emi_lender="SURYA FINANCE LTD")
         return statement_for(p)
     raise KeyError(key)
 

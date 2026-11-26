@@ -17,7 +17,7 @@ def _minimum_history(case: Case) -> float:
     """The same threshold the policy engine declines on, so the checklist cannot disagree with it."""
     from app.risk.engine import load_policy
 
-    rule = next(r for r in load_policy(case.jurisdiction)["knockouts"] if r["id"] == "KO-HISTORY")
+    rule = next(r for r in load_policy(case.policy_set)["knockouts"] if r["id"] == "KO-HISTORY")
     return float(rule["value"])
 
 
@@ -36,6 +36,10 @@ def approval_blockers(case: Case) -> list[str]:
     hits = uncleared_compliance_hits(case)
     if hits:
         problems.append("Watchlist matches (" + ", ".join(hits) + ") must be cleared by compliance before approval.")
+    if case.product == "used_car" and (case.vehicle is None or case.vehicle.valuation is None):
+        problems.append("Record the car's inspection valuation before approving.")
+    if any(s.code == "RK-INCOME-TYPE-UNCLEAR" for s in case.signals):
+        problems.append("Confirm whether the applicant is salaried or self-employed before approving.")
     return problems
 
 

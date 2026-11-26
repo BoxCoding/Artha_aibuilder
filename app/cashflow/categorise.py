@@ -6,12 +6,13 @@ import re
 from app.domain.models import Transaction
 
 CATEGORIES = (
-    "upi_credit", "neft_imps_credit", "card_settlement", "cash_deposit", "loan_disbursal", "self_transfer",
+    "salary_credit", "upi_credit", "neft_imps_credit", "card_settlement", "cash_deposit", "loan_disbursal", "self_transfer",
     "nach_return", "emi_debit", "return_charges", "supplier_payment", "rent", "utilities", "staff_salary",
     "cash_withdrawal", "bank_charges", "tax_payment", "other_credit", "other_debit",
 )
-BUSINESS_CREDIT = {"upi_credit", "neft_imps_credit", "card_settlement", "cash_deposit", "other_credit"}
-DIGITAL_CREDIT = {"upi_credit", "neft_imps_credit", "card_settlement"}
+# "Business" credit here means income: for a salaried applicant the salary is the income.
+BUSINESS_CREDIT = {"salary_credit", "upi_credit", "neft_imps_credit", "card_settlement", "cash_deposit", "other_credit"}
+DIGITAL_CREDIT = {"salary_credit", "upi_credit", "neft_imps_credit", "card_settlement"}
 
 _CREDIT_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("nach_return", re.compile(r"\b(NACH|ECS|ACH)\b.*\b(RTN|RETURN|REV)\b")),

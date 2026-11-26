@@ -1,0 +1,52 @@
+policy_id: used-car-loan-in
+version: 2026.11.1
+jurisdiction: IN
+currency: INR
+clauses:
+  POL-INTEGRITY: "Applications with a corroborated document-integrity finding of HIGH or CRITICAL severity are referred to integrity review and are not decided on the submitted documents."
+  POL-META-VERIFY: "Where only medium-severity integrity findings exist, the statement must be re-verified directly with the bank or through a consented account-aggregator fetch before approval."
+  POL-HISTORY: "A minimum of six months of bank statement or account-aggregator history is required."
+  POL-BOUNCES: "Three or more returned loan instalments in the last three months result in a decline."
+  POL-INCOME-TYPE: "Whether the applicant is salaried or self-employed is read from the bank data, not declared. Where the data does not show it clearly, a credit officer confirms it before the case is decided."
+  POL-MIN-INCOME: "Net monthly income, as seen in the bank data, must be at least 15,000."
+  POL-BANDS: "Risk bands A and B are eligible for approval, band C for approval with conditions, band D for referral, and band E for decline."
+  POL-LTV: "The loan is at most 80% of the lower of the agreed price and the inspection valuation for a car up to five years old, and 70% for an older car."
+  POL-VEHICLE-AGE: "The car must be no more than ten years old when the loan ends; the tenure is shortened to keep within this, and a car that cannot meet it even at the shortest tenure is not financed."
+  POL-SIZING: "The instalment, together with existing instalments, must fit within half of the net monthly salary for a salaried applicant, or half of the monthly business surplus for a self-employed applicant. The loan is the lowest of the requested amount, the product maximum, the LTV limit and the amount that instalment allows."
+  POL-VALUATION: "No approval is recorded until a loan officer has recorded an inspection valuation of the car."
+  POL-HYPOTHECATION: "The car is hypothecated to the lender and the hypothecation is endorsed on the registration certificate before disbursal."
+  POL-MODEL-CHALLENGE: "Where the transparent scorecard and the learned challenger model disagree materially about an application, the case is referred for human assessment rather than decided automatically."
+  POL-FOUR-EYES: "Approvals above 10,00,000 require a second approver."
+  POL-AML: "Applications where the applicant or a statement counterparty matches a sanctions or internal watchlist are referred to compliance and cannot be approved until compliance clears the match."
+  POL-KFS: "Every approval is accompanied by a Key Fact Statement stating the APR and all charges, which the borrower must accept before disbursal."
+knockouts:
+  - {id: KO-INTEGRITY, clause: POL-INTEGRITY, signal_category: FRAUD, min_severity: HIGH, outcome: REFER_INTEGRITY_REVIEW, reason_code: RC-DOCUMENT-VERIFICATION}
+  - {id: KO-HISTORY, clause: POL-HISTORY, feature: statement_span_months, op: lt, value: 6, outcome: DECLINE, reason_code: RC-SHORT-HISTORY}
+  - {id: KO-BOUNCES, clause: POL-BOUNCES, feature: nach_returns_3m, op: gte, value: 3, outcome: DECLINE, reason_code: RC-PAYMENT-RETURNS}
+  - {id: KO-MIN-INCOME, clause: POL-MIN-INCOME, feature: assessed_monthly_income, op: lt, value: 15000, outcome: DECLINE, reason_code: RC-LOW-INCOME}
+soft_rules:
+  - {id: SR-INCOME-TYPE, clause: POL-INCOME-TYPE, signal_code: RK-INCOME-TYPE-UNCLEAR, outcome: REFER, reason_code: RC-INCOME-TYPE-UNCLEAR, condition: "Confirm whether the applicant is salaried or self-employed; the bank data does not show it clearly."}
+  - {id: SR-MODEL-DISAGREE, clause: POL-MODEL-CHALLENGE, signal_code: RK-MODEL-DISAGREE, outcome: REFER, reason_code: RC-MODEL-DISAGREEMENT, condition: "The two risk models disagree about this application; a human must assess it."}
+  - {id: SR-AML, clause: POL-AML, signal_category: COMPLIANCE, min_severity: HIGH, outcome: REFER, reason_code: RC-COMPLIANCE-REVIEW, condition: "Compliance must review and clear the watchlist match before approval."}
+  - {id: SR-META-VERIFY, clause: POL-META-VERIFY, signal_category: FRAUD, min_severity: MEDIUM, outcome: REFER, reason_code: RC-DOCUMENT-VERIFICATION, condition: "Re-verify the bank statement directly with the bank or via a consented account-aggregator fetch."}
+bands:
+  A: APPROVE
+  B: APPROVE
+  C: APPROVE_WITH_CONDITIONS
+  D: REFER
+  E: DECLINE
+band_conditions:
+  C: ["Instalment collected by NACH mandate on the account analysed.", "Comprehensive insurance with the lender as loss payee for the full tenure."]
+standard_conditions:
+  - "Inspection valuation recorded by a loan officer before approval."
+  - "Car hypothecated to the lender and endorsed on the RC before disbursal."
+sizing:
+  min_amount: "100000"
+  max_amount: "1500000"
+  round_down_to: "5000"
+  allowed_tenures: [12, 24, 36, 48, 60]
+  income_share: "0.50"          # salaried: of net monthly salary; self-employed: of monthly surplus
+  ltv: [{max_age_years: 5, share: "0.80"}, {max_age_years: 99, share: "0.70"}]
+  max_vehicle_age_at_maturity_years: 10
+  indicative_annual_rate: {A: "0.12", B: "0.135", C: "0.15", D: "0.17", E: "0.17"}
+four_eyes_above: "1000000"
