@@ -41,3 +41,16 @@ def test_a_short_statement_is_one_call() -> None:
     gateway = ChunkReadingGateway()
     parsed = asyncio.run(document_ai.extract_with_gemini(build(3), gateway, UsageMeter(budget=10**9)))  # type: ignore[arg-type]
     assert gateway.calls == [3] and len(parsed.rows) == 33
+
+
+def test_uploads_up_to_forty_pages_are_accepted() -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from app.api.security import validate_upload
+    from app.config import get_settings
+
+    settings = get_settings()
+    assert validate_upload("statement.pdf", build(40), settings, None).page_count == 40
+    with pytest.raises(HTTPException):
+        validate_upload("statement.pdf", build(41), settings, None)

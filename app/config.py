@@ -92,7 +92,7 @@ class Settings(BaseSettings):
 
     # Limits
     max_upload_mb: int = 10
-    max_pages_per_document: int = 30
+    max_pages_per_document: int = 40  # statements run to 40 pages; longer ones are read in parallel page chunks
     max_documents_per_case: int = 3
     max_cases_in_memory: int = 300
     pipeline_concurrency: int = 2
